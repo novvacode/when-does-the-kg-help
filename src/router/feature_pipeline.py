@@ -69,11 +69,18 @@ class HybridFeaturePipeline:
         self.logger.info(f"Initialising Semantic Encoder: {config.embed_model}")
         self.embedder = SentenceTransformer(config.embed_model, device='cpu')
         self.scaler = StandardScaler()
+        # NOTE: must match the exact bucket vocabulary produced by
+        # src/lakehouse/sparsity.py (canonical sparsity source — see its
+        # module docstring). Values are lowercase "low" / "medium" / "high".
+        # A previous version of this map used a different vocabulary
+        # ("very_sparse"/"sparse"/"dense") that silently never matched any
+        # real bucket value, collapsing "low" and "high" to the same -1
+        # fallback and destroying this feature's H2 signal. See
+        # RESEARCH_LOG.md, 2026-08-06 audit, finding #3.
         self.bucket_map = {
-            "very_sparse": 0,
-            "sparse": 1,
-            "medium": 2,
-            "dense": 3,
+            "low": 0,
+            "medium": 1,
+            "high": 2,
             "unknown": -1
         }
 

@@ -34,9 +34,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import pickle
 import random
 import time
+import traceback
 import warnings
 from pathlib import Path
 
@@ -58,6 +60,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 # classes before calling pickle.load(). This prevents __main__-namespace deserialization
 # failures when train_router.py was executed directly during artifact creation.
 from src.router.feature_pipeline import HybridFeaturePipeline, RouterConfig  # noqa: F401
+from src.lakehouse.patient_snapshot import PatientSnapshot
+from src.model.prompts import build_user_message
 
 warnings.filterwarnings("ignore")
 
@@ -65,7 +69,6 @@ warnings.filterwarnings("ignore")
 # -- Paths --------------------------------------------------------------------
 EVAL_QA_FILE   = Path("data/lakehouse/qa/ehrqa_eval.parquet")
 ROUTER_DIR     = Path("data/router")
-SPARSITY_FILE  = Path("data/lakehouse/sparsity.parquet")
 ROUTER_MODEL   = Path("models/router/router_xgb_model.json")
 LABEL_ENC      = Path("models/router/label_encoder.pkl")
 FEAT_PIPELINE  = Path("models/router/feature_pipeline.pkl")
@@ -73,12 +76,23 @@ GEN_MODEL_BASE = "google/medgemma-1.5-4b-it"
 GEN_ADAPTER    = Path("models/medgemma-4b-qlora")
 OUT_DIR        = Path("experiments/results/final_eval")
 
+# Below this many questions, a run cannot support the paper's held-out claims.
+# A prior "quick test" run with --max-samples 1 was accidentally written into
+# this directory and mistaken for the final result (RESEARCH_LOG.md,
+# 2026-08-06 audit, finding #1) — this guard makes that mistake loud instead
+# of silent.
+MIN_FINAL_EVAL_SAMPLES = 50
+
 
 MODES           = ["T", "T+E", "T+E+K"]
 SYSTEMS         = ["T", "T+E", "T+E+K", "Router", "Random"]
 SEED            = 42
 MAX_NEW_TOKENS  = 256
 BERTSCORE_MODEL = "distilbert-base-uncased"
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s",
+                     datefmt="%H:%M:%S")
+logger = logging.getLogger("run_evaluation")
 
 
 random.seed(SEED)
@@ -193,42 +207,48 @@ def get_retrieval_context(question: str, hadm_id: int, mode: str) -> dict:
 
 # -- Router prediction -----------------------------------------------------------
 
-# -- Router prediction -----------------------------------------------------------
-
 
 def router_predict(
     question: str,
     hadm_id: int,
-    sp_info: dict,
+    struct_features: dict,
     n_kg_facts: int,
     prompt_tokens_t: int,
     latency_t: float,
     clf,
     le,
     feat_pipeline,
-    retrieval_contexts: dict[str, dict] | None = None,
 ) -> str:
     """
     Build feature vector and predict best mode using real structural patient features.
-    Matches the training schema and distribution perfectly to prevent evaluation drift.
+
+    Uses plain argmax over the trained classifier's predict_proba output — the
+    exact same decision rule train_router.py uses to report Accuracy/F1/the
+    confusion matrix. A previous version of this function overrode the
+    trained model's decision with hardcoded, never-validated probability
+    thresholds (THRESHOLD_TEK=0.30 / THRESHOLD_T=0.35), so the "Router" system
+    in past evaluation runs was not actually the model that was trained and
+    validated. See RESEARCH_LOG.md, 2026-08-06 audit, finding #2. If routing
+    behavior needs calibration, that must happen as a documented, validated
+    step against router_val (e.g. temperature scaling or a cost-sensitive
+    decision rule fit and reported in train_router.py), not as an
+    undocumented override at evaluation time.
     """
     if clf is None or le is None:
         return "T"
 
     try:
         if feat_pipeline is not None:
-            # Injecting identical statistical features recorded during training
+            # Feature schema must match HybridFeaturePipeline.cfg.ehr_feature_cols
+            # exactly: ["n_labs", "n_diag", "n_meds", "sparsity_score", "sparsity_bucket"].
             feature_row = pd.DataFrame([{
-                "question": question,
-                "n_labs": sp_info.get("n_labs", 0.0),
-                "n_diag": sp_info.get("n_diag", 0.0),
-                "days_since_note": sp_info.get("days_since_note", 999.0),
-                "sparsity_score": sp_info.get("score", 0.0),
-                "sparsity_bucket": sp_info.get("bucket", "unknown"),
+                "question":        question,
+                "n_labs":          struct_features.get("n_labs", 0.0),
+                "n_diag":          struct_features.get("n_diag", 0.0),
+                "n_meds":          struct_features.get("n_meds", 0.0),
+                "sparsity_score":  struct_features.get("sparsity_score", 0.0),
+                "sparsity_bucket": struct_features.get("sparsity_bucket", "unknown"),
             }])
-
-            print("\n========== [DEBUG FEATURES] ==========")
-            print(feature_row.to_dict(orient="records")[0])
             X = feat_pipeline.transform(feature_row)
         else:
             fallback_vec = np.array([
@@ -236,49 +256,26 @@ def router_predict(
                 float(n_kg_facts),
                 float(prompt_tokens_t),
                 float(latency_t),
-                float(sp_info.get("score", 0.0)),
+                float(struct_features.get("sparsity_score", 0.0)),
             ], dtype=np.float32).reshape(1, -1)
             X = fallback_vec
 
         probs = clf.predict_proba(X)[0]
         classes = list(le.classes_)
-
-        print("\n========== [DEBUG PROBABILITIES] ==========")
-        print("Classes:", classes)
-        print("Probabilities:", [round(float(p), 4) for p in probs])
-
-        # Priority 3: Threshold Calibration
-        # We explicitly boost the selection threshold for T+E+K to overcome class imbalance
-        prob_tek = probs[classes.index("T+E+K")] if "T+E+K" in classes else 0.0
-        prob_t = probs[classes.index("T")] if "T" in classes else 0.0
-
-        THRESHOLD_TEK = 0.30  # Force KG route if confidence passes 30%
-        THRESHOLD_T = 0.35
-
-        if prob_tek > THRESHOLD_TEK:
-            pred_mode = "T+E+K"
-        elif prob_t > THRESHOLD_T and np.argmax(probs) != classes.index("T+E+K"):
-            pred_mode = "T"
-        else:
-            pred_idx = np.argmax(probs)
-            pred_mode = classes[pred_idx]
-
-        print("Prediction (Calibrated):", pred_mode)
+        pred_mode = classes[int(np.argmax(probs))]
         return pred_mode
 
     except Exception as e:
-        print(f"[WARN] Router prediction failed: {e}. Using T.")
+        logger.warning(f"Router prediction failed for hadm_id={hadm_id}: {e}. Using T.")
         return "T"
-    
-    
+
 # -- Generation -------------------------------------------------------------------
 
 
 @torch.inference_mode()
 def generate(model, tok, question: str, context: str) -> tuple[str, float]:
     """Generate answer. Returns (answer_str, latency_ms)."""
-    user_msg = f"Context:\n{context}\n\nQuestion: {question}"
-    messages = [{"role": "user", "content": user_msg}]
+    messages = [{"role": "user", "content": build_user_message(context, question)}]
 
     try:
         prompt = tok.apply_chat_template(
@@ -346,7 +343,20 @@ def compute_bertscore_batch(
         )
         return F1.tolist()
     except Exception as e:
-        print(f"[WARN] BERTScore failed: {e}")
+        # BERTScore is a primary reported metric — a silent 0.0 fallback here
+        # previously produced a "final" results table where every system
+        # showed BERTScore-F1=0.0 with no persisted record of why (see
+        # RESEARCH_LOG.md, 2026-08-06 audit, finding #8). Log the full
+        # traceback to disk and surface it loudly instead of swallowing it.
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        with open(OUT_DIR / "bertscore_failure.log", "w", encoding="utf-8") as f:
+            f.write(f"BERTScore failed: {e}\n\n{traceback.format_exc()}")
+        logger.error(
+            f"BERTScore computation FAILED: {e}. Falling back to 0.0 for all "
+            f"{len(predictions)} predictions. Full traceback written to "
+            f"{OUT_DIR / 'bertscore_failure.log'}. This metric cannot be "
+            f"trusted for this run — fix the underlying issue and re-run."
+        )
         return [0.0] * len(predictions)
 
 
@@ -393,6 +403,7 @@ def vram_usage_mb() -> float:
 def run_evaluation(
     max_samples: int | None = None,
     skip_bertscore: bool = False,
+    allow_small_sample: bool = False,
 ) -> pd.DataFrame:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "figures").mkdir(exist_ok=True)
@@ -405,18 +416,44 @@ def run_evaluation(
         df_eval = df_eval.head(max_samples)
         print(f"[INFO] Limited to {max_samples} questions for quick test.")
 
-    # Load exhaustive structural sparsity features matching the training data distribution
-    sparsity_map: dict[int, dict] = {}
-    if SPARSITY_FILE.exists():
-        df_sp = pd.read_parquet(SPARSITY_FILE)
-        for _, row in df_sp.iterrows():
-            sparsity_map[int(row["hadm_id"])] = {
-                "n_labs": float(row.get("n_labs", 0)),
-                "n_diag": float(row.get("n_diag", 0)),
-                "days_since_note": float(row.get("d_note", 999.0)),
-                "score": float(row.get("sparsity_score", 0)),
-                "bucket": str(row.get("sparsity_bucket", "unknown")),
-            }
+    if len(df_eval) < MIN_FINAL_EVAL_SAMPLES and not allow_small_sample:
+        raise ValueError(
+            f"Refusing to write to {OUT_DIR} with only {len(df_eval)} question(s) "
+            f"(< MIN_FINAL_EVAL_SAMPLES={MIN_FINAL_EVAL_SAMPLES}). This directory "
+            "is treated as the paper's final result. If this is intentionally a "
+            "quick smoke test, pass --allow-small-sample so it can't be mistaken "
+            "for a full run later (see RESEARCH_LOG.md, 2026-08-06 audit, "
+            "finding #1)."
+        )
+
+    # Structural routing features — sourced via PatientSnapshot so eval-time
+    # features (n_labs, n_diag, n_meds, sparsity_score, sparsity_bucket) are
+    # computed exactly the way generate_synthetic_ehrqa.py computes them for
+    # router training data. A previous version read only n_labs/n_diag/score/
+    # bucket from sparsity.parquet directly and never populated n_meds at
+    # all (silently always 0.0 at eval time, despite being a real trained
+    # feature) — see RESEARCH_LOG.md, 2026-08-06 audit, finding #3.
+    snapshot_api = PatientSnapshot()
+    struct_feature_cache: dict[int, dict] = {}
+
+    def get_struct_features(hadm_id: int) -> dict:
+        if hadm_id not in struct_feature_cache:
+            try:
+                snap = snapshot_api.get(hadm_id)
+                struct_feature_cache[hadm_id] = {
+                    "n_labs": float(len(snap.get("labs", []))),
+                    "n_diag": float(len(snap.get("diagnoses", []))),
+                    "n_meds": float(len(snap.get("medications", []))),
+                    "sparsity_score": float(snap.get("sparsity_score") or 0.0),
+                    "sparsity_bucket": str(snap.get("sparsity_bucket") or "unknown"),
+                }
+            except Exception as e:
+                logger.warning(f"PatientSnapshot lookup failed for hadm_id={hadm_id}: {e}")
+                struct_feature_cache[hadm_id] = {
+                    "n_labs": 0.0, "n_diag": 0.0, "n_meds": 0.0,
+                    "sparsity_score": 0.0, "sparsity_bucket": "unknown",
+                }
+        return struct_feature_cache[hadm_id]
 
     gen_model, gen_tok = load_generator()
 
@@ -434,10 +471,7 @@ def run_evaluation(
         reference = str(row["answer"])
         hadm_id = int(row["hadm_id"])
         q_type = str(row.get("question_type", "unknown"))
-        sp_info = sparsity_map.get(hadm_id, {
-            "n_labs": 0.0, "n_diag": 0.0, "days_since_note": 999.0, 
-            "score": 0.0, "bucket": "unknown"
-        })
+        struct_features = get_struct_features(hadm_id)
 
         ctx: dict[str, dict] = {}
         for mode in MODES:
@@ -446,14 +480,13 @@ def run_evaluation(
         router_mode = router_predict(
             question=question,
             hadm_id=hadm_id,
-            sp_info=sp_info,
+            struct_features=struct_features,
             n_kg_facts=ctx["T+E+K"]["n_kg_facts"],
             prompt_tokens_t=ctx["T"]["prompt_tokens"],
             latency_t=ctx["T"]["latency_ms"],
             clf=router_clf,
             le=router_le,
             feat_pipeline=feat_pipeline,
-            retrieval_contexts=ctx,
         )
 
         random_mode = random.choice(MODES)
@@ -482,8 +515,8 @@ def run_evaluation(
                 "question": question,
                 "reference": reference,
                 "question_type": q_type,
-                "sparsity_score": sp_info["score"],
-                "sparsity_bucket": sp_info["bucket"],
+                "sparsity_score": struct_features["sparsity_score"],
+                "sparsity_bucket": struct_features["sparsity_bucket"],
                 "system": system,
                 "mode_used": mode_used,
                 "predicted_answer": system_answers[system],
@@ -526,6 +559,7 @@ def run_evaluation(
     df_results.to_csv(OUT_DIR / "per_question_results.csv", index=False)
     print(f"[INFO] Per-question results saved: {OUT_DIR / 'per_question_results.csv'}")
 
+    snapshot_api.close()
     return df_results
 
 
@@ -811,6 +845,10 @@ def main() -> None:
                         help="Limit to N questions (e.g. --max-samples 30 for quick test)")
     parser.add_argument("--skip-bertscore", action="store_true",
                         help="Skip BERTScore for faster runs")
+    parser.add_argument("--allow-small-sample", action="store_true",
+                        help="Allow writing < %d questions to experiments/results/final_eval/ "
+                             "(only for intentional smoke tests — never for the real final run)"
+                             % MIN_FINAL_EVAL_SAMPLES)
     args = parser.parse_args()
 
     print("=" * 70)
@@ -821,6 +859,7 @@ def main() -> None:
     df = run_evaluation(
         max_samples=args.max_samples,
         skip_bertscore=args.skip_bertscore,
+        allow_small_sample=args.allow_small_sample,
     )
 
     summary = build_summary_table(df)

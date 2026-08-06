@@ -367,6 +367,138 @@ def get_top_diagnoses(
     return [str(r[0]).strip() for r in rows if r[0] and str(r[0]).strip()]
 
 
+def get_diagnosis_codes(
+    con: duckdb.DuckDBPyConnection,
+    schema: Dict[str, Dict[str, Optional[str]]],
+    hadm_id: int,
+    limit: int = 10,
+) -> List[Tuple[str, str]]:
+    """Raw (icd_code, icd_version) pairs for MKG seed-disease prefix matching
+    (see load_mkg_facts / match_seed_diseases below) — get_top_diagnoses()
+    returns human-readable titles, not codes, so this is a separate query."""
+    d = schema["diagnoses"]
+    d_hadm, d_icd, d_ver, d_seq = d["hadm_id"], d["icd_code"], d["icd_version"], d["seq_num"]
+    if not d_hadm or not d_icd:
+        return []
+    ver_expr = f"CAST(d.{d_ver} AS VARCHAR)" if d_ver else "'10'"
+    query = f"""
+        SELECT CAST(d.{d_icd} AS VARCHAR) AS icd_code, {ver_expr} AS icd_version
+        FROM diagnoses d
+        WHERE d.{d_hadm} = ?
+        ORDER BY d.{d_seq} ASC NULLS LAST
+        LIMIT ?
+    """
+    rows = con.execute(query, [hadm_id, limit]).fetchall()
+    return [(str(r[0]).strip(), str(r[1]).strip()) for r in rows if r[0]]
+
+
+# ── MKG-grounded reasoning questions ───────────────────────────────────────────
+#
+# The template question types above (primary_diagnosis, diagnoses, lab,
+# medication) derive their reference answer directly from the same
+# structured fields (diagnoses[0], labs[:3], medications[:5]) that are also
+# shown verbatim in the T+E/T+E+K prompt's EHR snapshot. That makes those
+# comparisons partly mechanical (the T mode's prompt doesn't contain the
+# EHR snapshot at all, so it structurally can't produce the literal answer,
+# while T+E/T+E+K can — regardless of any genuine reasoning benefit).
+# See RESEARCH_LOG.md, 2026-08-06 audit, finding #5.
+#
+# contraindication_check questions below are designed so the correct answer
+# is NOT recoverable from the EHR snapshot alone: knowing a patient has
+# "Chronic Kidney Disease Stage 3" does not by itself tell you Metformin is
+# contraindicated at that stage — that fact only lives in the MKG. This
+# gives the T vs. T+E vs. T+E+K comparison at least one question type where
+# T+E+K's advantage (if any) reflects genuine use of KG facts, not context
+# containing the literal answer string.
+
+def load_mkg_facts() -> Tuple[Dict[str, List[Tuple[str, str]]], Dict[str, List[str]]]:
+    """Load CONTRAINDICATED_WITH and FIRST_LINE_TREATMENT edges from the
+    hand-curated ontology CSV (mkg/edges/ontology_edges.csv) — the same file
+    src/mkg/neo4j_loader.py loads into Neo4j, read directly here so QA
+    generation doesn't require a running Neo4j instance."""
+    path = Path("mkg/edges/ontology_edges.csv")
+    contraindicated: Dict[str, List[Tuple[str, str]]] = {}
+    first_line: Dict[str, List[str]] = {}
+    if not path.exists():
+        print(f"[WARN] {path} not found — contraindication_check questions will be skipped.")
+        return contraindicated, first_line
+
+    df = pd.read_csv(path)
+    for _, row in df.iterrows():
+        disease = str(row["disease"]).strip()
+        drug = str(row["target"]).strip()
+        if row["edge_type"] == "CONTRAINDICATED_WITH":
+            note = str(row["notes"]).strip() if pd.notna(row.get("notes")) else ""
+            contraindicated.setdefault(disease, []).append((drug, note))
+        elif row["edge_type"] == "FIRST_LINE_TREATMENT":
+            first_line.setdefault(disease, []).append(drug)
+    return contraindicated, first_line
+
+
+def match_seed_diseases(icd_pairs: List[Tuple[str, str]]) -> List[str]:
+    """Match an admission's (icd_code, icd_version) pairs against
+    SEED_DISEASES' icd9/icd10 prefixes — the same prefix-matching approach
+    src/mkg/cooccurrence.py uses to build the co-occurrence edges, applied
+    per-admission instead of per-disease-cohort."""
+    from src.mkg.seed_diseases import SEED_DISEASES
+
+    matched: List[str] = []
+    for icd_code, icd_version in icd_pairs:
+        code = icd_code.upper()
+        for d in SEED_DISEASES:
+            if code.startswith(d["icd9_prefix"]) or code.startswith(d["icd10_prefix"]):
+                if d["name"] not in matched:
+                    matched.append(d["name"])
+    return matched
+
+
+def make_contraindication_qa(
+    hadm_id: int,
+    disease: str,
+    contraindicated: Dict[str, List[Tuple[str, str]]],
+    first_line: Dict[str, List[str]],
+    n_labs: int, n_diag: int, n_meds: int,
+    sparsity_score: Optional[float], sparsity_bucket: str,
+) -> Optional[Dict]:
+    """Build one contraindication-check QA pair for a matched seed disease.
+    Roughly half the time asks about a genuinely contraindicated drug
+    (answer: unsafe), half the time about a first-line drug for the same
+    disease (answer: safe) — so the question set isn't trivially answerable
+    by always saying "contraindicated"."""
+    bad_options = contraindicated.get(disease, [])
+    good_options = first_line.get(disease, [])
+    if not bad_options and not good_options:
+        return None
+
+    ask_unsafe = bool(bad_options) and (not good_options or random.random() < 0.5)
+    if ask_unsafe:
+        drug, note = random.choice(bad_options)
+        reason = f" ({note})" if note else ""
+        answer = f"No, {drug} is contraindicated in {disease}{reason}."
+    else:
+        drug = random.choice(good_options)
+        answer = f"Yes, {drug} is a standard first-line treatment for {disease}."
+
+    question = f"Would prescribing {drug} be appropriate for this patient's {disease}?"
+    return {
+        "hadm_id":         hadm_id,
+        "question_type":   "contraindication_check",
+        "question":        question,
+        "answer":          answer,
+        "age":             None,
+        "gender":          None,
+        "diagnoses":       disease,
+        "labs":            "",
+        "medications":     "",
+        "source":          "synthetic_ehrqa_kg",
+        "n_labs":          n_labs,
+        "n_diag":          n_diag,
+        "n_meds":          n_meds,
+        "sparsity_score":  sparsity_score,
+        "sparsity_bucket": sparsity_bucket,
+    }
+
+
 def get_abnormal_labs(
     con: duckdb.DuckDBPyConnection,
     schema: Dict[str, Dict[str, Optional[str]]],
@@ -590,6 +722,8 @@ def generate_for_split(
     seen_keys: set = set()
     scanned = 0
     modes = list(TEMPLATES.keys())
+    contraindicated_edges, first_line_edges = load_mkg_facts()
+    max_kg_qa_per_admission = 2
     t0 = time.time()
 
     for subject_id, hadm_id in admissions:
@@ -630,6 +764,33 @@ def generate_for_split(
 
             if len(records) >= target:
                 break
+
+        # KG-grounded contraindication_check questions (see load_mkg_facts /
+        # make_contraindication_qa docstrings) — only generated for
+        # admissions whose diagnoses match a seed disease with ontology
+        # coverage, so this is a bonus type layered on top of, not a
+        # replacement for, the template types above.
+        if len(records) < target and (contraindicated_edges or first_line_edges):
+            icd_pairs = get_diagnosis_codes(con, schema, hadm_id)
+            matched_diseases = match_seed_diseases(icd_pairs)
+            for disease in matched_diseases[:max_kg_qa_per_admission]:
+                rec = make_contraindication_qa(
+                    hadm_id, disease, contraindicated_edges, first_line_edges,
+                    n_labs=struct_features["n_labs"],
+                    n_diag=struct_features["n_diag"],
+                    n_meds=struct_features["n_meds"],
+                    sparsity_score=struct_features["sparsity_score"],
+                    sparsity_bucket=struct_features["sparsity_bucket"],
+                )
+                if rec is None:
+                    continue
+                key = (hadm_id, rec["question"], rec["answer"])
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                records.append(rec)
+                if len(records) >= target:
+                    break
 
         if len(records) >= target:
             break

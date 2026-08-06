@@ -37,6 +37,8 @@ from transformers import (
     BitsAndBytesConfig,
 )
 
+from src.model.prompts import build_user_message
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -181,7 +183,7 @@ class AnswerGenerator:
         self.logger    = logger
 
     def generate(self, prompt_context: str, question: str) -> tuple[str, float, int]:
-        messages = [{"role": "user", "content": f"{prompt_context}\n\nQuestion: {question}"}]
+        messages = [{"role": "user", "content": build_user_message(prompt_context, question)}]
         formatted = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = self.tokenizer(formatted, return_tensors="pt")
         inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
@@ -355,7 +357,26 @@ class ReportGenerator:
             },
             "model": {"base_model": cfg.base_model, "seed": cfg.seed},
             "label_distribution": {k: {"count": v, "pct": round(v / len(df) * 100, 1)} for k, v in df["best_mode"].value_counts().to_dict().items() if k not in ["FAILED", "FAILED_GENERATION", "MISSING_MODES"]},
-            "mean_metrics_per_mode": {mode: {"composite": round(df[f"composite_{mode.replace('+','').lower()}"].mean(), 4)} for mode in cfg.modes if f"composite_{mode.replace('+','').lower()}" in df.columns}
+            "mean_metrics_per_mode": {mode: {"composite": round(df[f"composite_{mode.replace('+','').lower()}"].mean(), 4)} for mode in cfg.modes if f"composite_{mode.replace('+','').lower()}" in df.columns},
+            # Diagnostic for RESEARCH_LOG.md finding #7: HallucinationDetector
+            # uses keyword heuristics that could plausibly fire more often on
+            # longer contexts (T+E+K has strictly more context than T/T+E),
+            # independent of true answer quality, which would bias oracle
+            # labels away from T+E+K for reasons unrelated to hallucination.
+            # These per-mode rates make that hypothesis checkable rather than
+            # assumed — compare halluc_rate and mean prompt length across
+            # modes after each oracle generation run.
+            "hallucination_diagnostic_per_mode": {
+                mode: {
+                    "halluc_rate": round(df[f"halluc_{mode.replace('+','').lower()}"].mean(), 4),
+                    "mean_prompt_chars": round(
+                        df[f"prompt_{mode.replace('+','').lower()}"].astype(str).str.len().mean(), 1
+                    ),
+                }
+                for mode in cfg.modes
+                if f"halluc_{mode.replace('+','').lower()}" in df.columns
+                and f"prompt_{mode.replace('+','').lower()}" in df.columns
+            },
         }
 
         json_path = Path(self.cfg.report_dir) / f"oracle_{split_name}_{timestamp}.json"

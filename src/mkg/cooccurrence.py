@@ -16,7 +16,8 @@ from lakehouse.query import get_connection
 from mkg.seed_diseases import SEED_DISEASES
 
 COOCCURRENCE_THRESHOLD = 0.05  # >5% of admissions
-TOP_N_LABS_PER_DISEASE = 10    # cap to keep graph focused
+TOP_N_LABS_PER_DISEASE = 15    # cap to keep graph focused (raised from 10 as part
+                                # of the 2026-08-06 MKG expansion — see RESEARCH_LOG.md)
 
 
 def find_disease_hadm_ids(con, icd9_prefix: str, icd10_prefix: str) -> list:

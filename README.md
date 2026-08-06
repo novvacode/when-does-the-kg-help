@@ -74,6 +74,10 @@ Clinical Question + Patient ID
 ## Key Results
 
 > Full results available after evaluation on the held-out MIMIC-IV EHR-QA set.
+> A prior "final" evaluation run in this repo only covered a single question
+> and does not reflect real performance — see [RESEARCH_LOG.md](RESEARCH_LOG.md)
+> for the full audit that found this and the fixes applied before the real
+> held-out run.
 
 Evaluation compares five systems:
 
@@ -97,11 +101,23 @@ Metrics: BLEU · ROUGE-L · BERTScore-F1 · EHR-contradiction rate · KG-contrad
 - EHR sparsity score: `S = α₁·𝟙(n_labs < τ) + α₂·𝟙(n_diag < τ) + α₃·𝟙(d_note > τ)` → buckets `{low, medium, high}`
 
 ### Medical Knowledge Graph (Phase 2)
-- Neo4j graph covering 5 chronic conditions: T2DM, Hypertension, CKD, Heart Failure, COPD
-- ~1–3k nodes (Disease, Symptom, LabTest, Drug), ~5–10k edges
-- Edge types: `HAS_SYMPTOM`, `MONITORED_BY`, `FIRST_LINE_TREATMENT`, `CONTRAINDICATED_IF`
-- Sources: ADA 2023, ACC/AHA 2023, KDIGO 2022, GOLD 2023 + MIMIC-IV co-occurrence (threshold ≥ 5%)
+- Neo4j graph covering 25 chronic/common internal-medicine conditions (T2DM,
+  hypertension, CKD stages 3–5, heart failure, COPD, sepsis, AKI, and others —
+  see `src/mkg/seed_diseases.py`)
+- Edge types: `HAS_SYMPTOM`, `INDICATES_LAB`, `FIRST_LINE_TREATMENT`,
+  `CONTRAINDICATED_WITH`, `CO_OCCURS_WITH_LAB`
+- **Scope note:** the ontology edges (`mkg/edges/ontology_edges.csv`) are
+  hand-curated from standard guideline knowledge (ADA 2023, ACC/AHA 2023,
+  KDIGO 2022, GOLD 2023 style facts), not extracted from a licensed UMLS/
+  SNOMED-CT API — an earlier design goal that was not implemented. Current
+  scale after the 2026-08-06 expansion (RESEARCH_LOG.md finding #6): ~135
+  nodes, ~215 ontology edges (up from ~114/135 before), plus co-occurrence
+  edges computed directly from MIMIC-IV (threshold ≥ 5% of admissions per
+  disease). This is materially smaller than the original 1,000–3,000 node /
+  5,000–10,000 edge target, which assumed full ontology-API extraction —
+  report this honestly as a scope limitation rather than the original target.
 - 50-edge manual validation against clinical references
+  (`mkg/validation/edge_validation_50.csv`)
 
 ### FAISS Retrieval (Phase 3)
 - `BAAI/bge-small-en-v1.5` embeddings (384-dim, cached)
@@ -110,8 +126,16 @@ Metrics: BLEU · ROUGE-L · BERTScore-F1 · EHR-contradiction rate · KG-contrad
 
 ### MedGemma Fine-Tuning (Phase 4)
 - Base: `google/medgemma-1.5-4b-it`
-- Fine-tuning: QLoRA (r=16, α=32, NF4, target: `q_proj` + `v_proj`)
-- Training data: MedQA train split + MedQuAD + synthetic EHR-QA from MIMIC-IV fine-tune split
+- Fine-tuning: QLoRA (r=16, α=32, NF4, target: all linear layers)
+- Training data: synthetic EHR-QA from the MIMIC-IV fine-tune patient split
+  (`data/lakehouse/qa/ehrqa_finetune.parquet`)
+- **Training prompts are retrieval-augmented**: each example's context is
+  built by calling the real `Retriever` (same code path as inference) with a
+  randomly, reproducibly assigned mode (T / T+E / T+E+K, equal weight by
+  default — see `CONTEXT_MODE_WEIGHTS` in `src/model/train_qlora.py`), so the
+  model is trained on the exact prompt structures it is evaluated on. This
+  replaced an earlier version that only ever trained on a flattened EHR
+  snapshot with no retrieved passages or KG facts (RESEARCH_LOG.md finding #4).
 - Hardware: RTX 4050 Laptop GPU (6 GB VRAM), 2 epochs, ~4–6 hours
 
 ### Adaptive Router (Phase 5)
@@ -137,37 +161,41 @@ med-rag-router/
 ├── src/
 │   ├── lakehouse/
 │   │   ├── ingest.py               # CSV → Parquet conversion
-│   │   └── query.py                # DuckDB query helpers
-│   │
-│   ├── ehr/
-│   │   ├── snapshot.py             # PatientSnapshot API
-│   │   └── sparsity.py             # EHR sparsity score computation
+│   │   ├── query.py                # DuckDB query helpers
+│   │   ├── make_splits.py          # Leakage-safe patient ID splits (seed=42)
+│   │   ├── patient_snapshot.py     # PatientSnapshot API (canonical EHR snapshot)
+│   │   └── sparsity.py             # EHR sparsity score computation (canonical)
 │   │
 │   ├── mkg/
-│   │   ├── builder.py              # MKG edge construction
-│   │   ├── neo4j_loader.py         # Neo4j import
-│   │   ├── entity_linking.py       # ICD/lab/drug → MKG node IDs
-│   │   └── retrieval.py            # Subgraph retrieval + linearization
+│   │   ├── seed_diseases.py        # Seed disease list + node/edge schema
+│   │   ├── cooccurrence.py         # EHR co-occurrence edges from MIMIC-IV
+│   │   ├── neo4j_loader.py         # Loads mkg/edges/*.csv into Neo4j
+│   │   ├── retrieval.py            # Subgraph retrieval + linearization
+│   │   └── sample_validation.py    # Manual edge validation sampling
 │   │
 │   ├── retrieval/
-│   │   ├── embedder.py             # Text chunk embeddings
-│   │   ├── faiss_index.py          # FAISS index build + query
+│   │   ├── embedder.py             # FAISS index build over note chunks
 │   │   └── retriever.py            # Unified T / T+E / T+E+K retriever
 │   │
 │   ├── router/
+│   │   ├── build_router_dataset.py # Runs all 3 modes over router splits
 │   │   ├── oracle_labels.py        # Generate router training labels
 │   │   ├── feature_pipeline.py     # HybridFeaturePipeline
-│   │   └── train_router.py         # XGBoost router training
+│   │   ├── train_router.py         # XGBoost router training
+│   │   └── verify_oracle.py        # Oracle label sanity checks
 │   │
 │   ├── model/
-│   │   ├── finetune.py             # QLoRA fine-tuning script
-│   │   ├── generate.py             # Inference with MedGemma
-│   │   └── prompts.py              # Prompt templates (T / T+E / T+E+K)
+│   │   ├── train_qlora.py          # QLoRA fine-tuning (retrieval-augmented)
+│   │   ├── prompts.py              # Single source of truth for the MedGemma
+│   │   │                           # user-message format, shared by training,
+│   │   │                           # oracle generation, and final evaluation
+│   │   └── test_medgemma.py        # Manual single-example smoke test
+│   │
+│   ├── qa/
+│   │   └── generate_synthetic_ehrqa.py  # Split-safe synthetic QA generation
 │   │
 │   └── evaluation/
-│       ├── run_evaluation.py       # Final held-out evaluation
-│       ├── metrics.py              # BLEU, ROUGE, BERTScore
-│       └── hallucination.py        # Hallucination taxonomy + annotation
+│       └── run_evaluation.py       # Final held-out evaluation
 │
 ├── data/
 │   ├── raw/                        # MIMIC-IV CSVs (not in repo)
@@ -185,16 +213,19 @@ med-rag-router/
 │       ├── router_xgb_model.json
 │       ├── label_encoder.pkl
 │       ├── feature_pipeline.pkl
-│       └── feature_names.json
+│       └── router_metadata.json
 │
 ├── splits/
 │   └── patient_splits.json         # Locked patient ID splits (seed=42)
 │
 ├── mkg/
-│   ├── nodes/                      # Disease, symptom, lab, drug CSVs
-│   ├── edges/                      # Ontology + co-occurrence edge CSVs
-│   ├── validation/                 # 50-edge manual validation table
-│   └── stats.json                  # Node/edge counts for paper
+│   ├── edges/                      # Ontology (hand-curated) + co-occurrence
+│   │   │                           # (computed from MIMIC-IV) edge CSVs —
+│   │   │                           # see "Medical Knowledge Graph" below for
+│   │   │                           # actual scope vs. original design target
+│   │   ├── ontology_edges.csv
+│   │   └── cooccurrence_edges.csv
+│   └── validation/                 # 50-edge manual validation table
 │
 ├── experiments/
 │   ├── results/
@@ -202,6 +233,8 @@ med-rag-router/
 │   └── logs/
 │
 ├── notebooks/                      # Exploration notebooks
+├── RESEARCH_LOG.md                 # Full research history — bugs, fixes,
+│                                    # experiments, conclusions
 ├── environment.yml
 ├── requirements.txt
 └── README.md
@@ -236,7 +269,11 @@ pip install -r requirements.txt
 
 ## Running the Pipeline
 
-> Each step depends on the previous. Run in order.
+> Each step depends on the previous. Run in order. As of the 2026-08-06 audit
+> fix (see [RESEARCH_LOG.md](RESEARCH_LOG.md)), QLoRA fine-tuning now builds
+> retrieval-augmented prompts, so the FAISS index and MKG must exist
+> **before** fine-tuning — this reorders steps 4/5 relative to earlier
+> versions of this README.
 
 **Step 1 — Ingest MIMIC-IV into the lakehouse**
 ```bash
@@ -245,36 +282,43 @@ python src/lakehouse/ingest.py
 
 **Step 2 — Lock patient ID splits** *(run once, never again)*
 ```bash
-python src/ehr/create_splits.py
+python -m src.lakehouse.make_splits
 ```
 
-**Step 3 — Build and load the Medical Knowledge Graph**
+**Step 3 — Generate split-safe synthetic QA + EHR sparsity table**
 ```bash
-python src/mkg/builder.py
-python src/mkg/neo4j_loader.py
+python -m src.qa.generate_synthetic_ehrqa
+python -m src.lakehouse.sparsity
 ```
 
-**Step 4 — Build FAISS index**
+**Step 4 — Build and load the Medical Knowledge Graph**
 ```bash
-python src/retrieval/faiss_index.py
+python -m src.mkg.cooccurrence
+python -m src.mkg.neo4j_loader
 ```
 
-**Step 5 — Fine-tune MedGemma with QLoRA**
+**Step 5 — Build the FAISS text index**
 ```bash
-python src/model/finetune.py
+python -m src.retrieval.embedder
 ```
 
-**Step 6 — Generate router dataset**
+**Step 6 — Fine-tune MedGemma with QLoRA** *(now retrieval-augmented — requires
+Neo4j running and the FAISS index from Step 5)*
+```bash
+python -m src.model.train_qlora
+```
+
+**Step 7 — Generate router dataset**
 ```bash
 python -m src.router.build_router_dataset
 ```
 
-**Step 7 — Generate oracle labels** *(~45–60 min on RTX 4050)*
+**Step 8 — Generate oracle labels** *(~45–60 min on RTX 4050)*
 ```bash
 python -m src.router.oracle_labels
 ```
 
-**Step 8 — Train the adaptive router**
+**Step 9 — Train the adaptive router**
 ```bash
 # Default parameters
 python -m src.router.train_router
@@ -283,13 +327,13 @@ python -m src.router.train_router
 python -m src.router.train_router --tune
 ```
 
-**Step 9 — Run final evaluation** *(held-out set, first and only use)*
+**Step 10 — Run final evaluation** *(held-out set, first and only use)*
 ```bash
-# Full run
+# Full run — refuses to run on fewer than 50 questions unless overridden
 python -m src.evaluation.run_evaluation
 
-# Quick test (30 questions)
-python -m src.evaluation.run_evaluation --max-samples 30
+# Intentional quick smoke test only (never mistake this for the final run)
+python -m src.evaluation.run_evaluation --max-samples 30 --allow-small-sample
 ```
 
 ---

@@ -14,6 +14,7 @@ Usage:
 
 import os
 import sys
+import gc
 import json
 import math
 import glob
@@ -35,6 +36,8 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 
+from src.model.prompts import build_user_message
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 # Model & Paths
@@ -52,14 +55,26 @@ LORA_ALPHA = 32
 LORA_DROPOUT = 0.05
 TARGET_MODULES = "all-linear"  # Best practice for Gemma architectures
 
-# Context mode used to build training prompts. Kept as an explicit switch so
-# that future experiments can align the SFT prompt structure with whichever
-# inference-time context configuration (T / T+E / T+E+K) is being evaluated,
-# instead of only ever training on the bare patient snapshot (T).
-# Supported values: "T" (snapshot only). "T+E" and "T+E+K" are placeholders
-# for retrieval-augmented training data and are not yet wired up in
-# load_and_prep_data() below — see Change 9 note in that function.
-CONTEXT_MODE = "T"
+# Context modes sampled during training, and their relative sampling weights.
+#
+# PREVIOUSLY: this script only ever trained on a hand-flattened EHR-snapshot
+# string (a format distinct from ALL THREE inference-time prompt structures
+# produced by src/retrieval/retriever.py::RetrievalResult.prompt_context).
+# The model never saw retrieved note passages or KG facts during training,
+# so at evaluation time — when it IS given those — it was operating out of
+# distribution. This was a self-documented gap ("Change 9... not implemented
+# yet") and is finding #4 of the 2026-08-06 audit (RESEARCH_LOG.md).
+#
+# FIX: load_and_prep_data() now calls the real Retriever for every training
+# example, so training prompts are built with the exact same
+# RetrievalResult.prompt_context formatting (## Retrieved Clinical Passages /
+# ## Patient EHR Snapshot / ## Relevant Medical Knowledge) used at inference
+# in run_evaluation.py. Each example's mode is sampled independently and
+# reproducibly (seeded) from CONTEXT_MODE_WEIGHTS, so the model gets
+# balanced exposure to all three retrieval configurations the router can
+# select at inference time, rather than being systematically better at
+# whichever single mode it happened to be trained on.
+CONTEXT_MODE_WEIGHTS = {"T": 1.0, "T+E": 1.0, "T+E+K": 1.0}
 
 # ── Pre-Flight Validation ─────────────────────────────────────────────────────
 
@@ -134,6 +149,19 @@ def run_preflight_checks():
         raise ValueError(f"Dataset file is empty: {DATA_PATH.resolve()}")
     print(f"✅ Dataset  : {DATA_PATH.name} located.")
 
+    # 2b. Retrieval infra validation — training now builds prompts via the
+    # real Retriever (see load_and_prep_data) so it needs the FAISS index
+    # to exist. KG (Neo4j) is best-effort and checked separately at load time.
+    faiss_index = Path("embeddings/notes_index.faiss")
+    faiss_chunks = Path("embeddings/notes_chunks.parquet")
+    if not faiss_index.exists() or not faiss_chunks.exists():
+        raise FileNotFoundError(
+            f"FAISS index not found ({faiss_index} / {faiss_chunks}). "
+            "Training now builds retrieval-augmented prompts and requires the "
+            "text index to exist first. Run: python src/retrieval/embedder.py"
+        )
+    print(f"✅ FAISS    : index found at {faiss_index}")
+
     # 3. HF Authentication Validation (env var OR cached `hf auth login` token)
     is_authenticated, source, username = get_hf_auth_status()
     if not is_authenticated:
@@ -198,6 +226,32 @@ def resolve_assistant_role(tokenizer: AutoTokenizer) -> str:
 
 # ── Data Preparation ──────────────────────────────────────────────────────────
 
+def _load_kg_module():
+    """Best-effort Neo4j MKG client load, mirroring the pattern used by
+    build_router_dataset.py / run_evaluation.py. Training can proceed with KG
+    disabled (T+E+K examples degrade to T+E-shaped context), but a run with
+    it disabled should not be treated as the real final fine-tune."""
+    try:
+        import src.mkg.retrieval as kg_module
+        print("[INFO] Neo4j KG module loaded successfully — T+E+K training "
+              "examples will include real KG facts.")
+        return kg_module
+    except Exception as e:
+        print(f"[WARN] Could not initialize KG module: {e}")
+        print("[WARN] T+E+K training examples will be built WITHOUT KG facts. "
+              "Start Neo4j and re-run for a fully aligned fine-tune.")
+        return None
+
+
+def _sample_modes(n: int, weights: dict, seed: int) -> list[str]:
+    """Reproducibly assign a retrieval mode to each training example."""
+    modes = list(weights.keys())
+    probs = np.array([weights[m] for m in modes], dtype=float)
+    probs = probs / probs.sum()
+    rng = np.random.RandomState(seed)
+    return rng.choice(modes, size=n, p=probs).tolist()
+
+
 def load_and_prep_data(tokenizer: AutoTokenizer) -> Dataset:
     print(f"[INFO] Loading fine-tuning dataset from {DATA_PATH}...")
     try:
@@ -207,11 +261,16 @@ def load_and_prep_data(tokenizer: AutoTokenizer) -> Dataset:
 
     if df.empty:
         raise ValueError("The dataset DataFrame is completely empty.")
+    if "hadm_id" not in df.columns:
+        raise ValueError(
+            "ehrqa_finetune.parquet has no hadm_id column — retrieval-augmented "
+            "training prompts require it to look up each patient's context."
+        )
 
     # ── Dataset sanity statistics (printed before formatting) ────────────────
     num_samples = len(df)
     num_unique_patients = df["patient_id"].nunique() if "patient_id" in df.columns else None
-    num_unique_admissions = df["hadm_id"].nunique() if "hadm_id" in df.columns else None
+    num_unique_admissions = df["hadm_id"].nunique()
     avg_question_len = df["question"].astype(str).str.split().apply(len).mean()
     avg_answer_len = df["answer"].astype(str).str.split().apply(len).mean()
 
@@ -220,7 +279,7 @@ def load_and_prep_data(tokenizer: AutoTokenizer) -> Dataset:
     print("─" * 60)
     print(f"  Samples              : {num_samples}")
     print(f"  Unique patients      : {num_unique_patients if num_unique_patients is not None else 'N/A (no patient_id column)'}")
-    print(f"  Unique admissions    : {num_unique_admissions if num_unique_admissions is not None else 'N/A (no hadm_id column)'}")
+    print(f"  Unique admissions    : {num_unique_admissions}")
     print(f"  Avg question length  : {avg_question_len:.2f} words")
     print(f"  Avg answer length    : {avg_answer_len:.2f} words")
     print("─" * 60)
@@ -229,46 +288,92 @@ def load_and_prep_data(tokenizer: AutoTokenizer) -> Dataset:
     # instead of assuming "model" is correct — see resolve_assistant_role().
     assistant_role = resolve_assistant_role(tokenizer)
 
+    # ── Retrieval-aligned context construction ────────────────────────────────
+    # Import locally to keep this script importable even when the retrieval
+    # stack (FAISS index, embeddings) isn't built yet, for tooling that only
+    # needs e.g. resolve_assistant_role().
+    from src.retrieval.retriever import Retriever, Mode as RMode
+
+    print("[INFO] Initializing Retriever for training-context construction "
+          "(FAISS index + embedding model must already be built — run "
+          "src/retrieval/embedder.py first if this fails)...")
+    kg_module = _load_kg_module()
+    retriever = Retriever(kg_module=kg_module)
+
+    mode_assignments = _sample_modes(len(df), CONTEXT_MODE_WEIGHTS, seed=SEED)
+    df = df.reset_index(drop=True)
+    df["_context_mode"] = mode_assignments
+
+    mode_map = {"T": RMode.T, "T+E": RMode.TE, "T+E+K": RMode.TEK}
+    n_retrieval_failures = 0
+
     def format_prompt(row):
-        """
-        Builds the context string and applies the model's own chat template.
+        nonlocal n_retrieval_failures
+        mode_str = row["_context_mode"]
+        hadm_id = int(row["hadm_id"]) if pd.notna(row.get("hadm_id")) else None
 
-        NOTE (Change 9): this currently only encodes the bare patient
-        snapshot (context mode "T"). If CONTEXT_MODE is later extended to
-        "T+E" or "T+E+K" to match retrieval-augmented inference prompts,
-        this function needs to also splice in retrieved evidence / knowledge
-        graph context here so that training-time and inference-time prompt
-        structure stay aligned. Not implemented yet — flagged for follow-up.
-        """
-        age = row.get("age", "Unknown")
-        gender = row.get("gender", "Unknown")
-        diagnoses = row.get("diagnoses", "None")
-        labs = row.get("labs", "None")
-        medications = row.get("medications", "None")
-
-        context = (f"Patient EHR Snapshot:\n"
-                   f"Age/Gender: {age} {gender}\n"
-                   f"Diagnoses: {diagnoses}\n"
-                   f"Labs: {labs}\n"
-                   f"Medications: {medications}")
-
-        user_msg = f"Context:\n{context}\n\nQuestion: {row['question']}"
+        try:
+            if hadm_id is None:
+                raise ValueError("missing hadm_id")
+            result = retriever.retrieve(
+                question=str(row["question"]), hadm_id=hadm_id, mode=mode_map[mode_str]
+            )
+            context = result.prompt_context
+        except Exception as e:
+            n_retrieval_failures += 1
+            # Fall back to the flattened snapshot fields already present on
+            # the synthetic QA row, so a handful of bad hadm_ids can't crash
+            # an entire training run — but this should stay rare (see the
+            # failure-rate check after dataset.map() below).
+            age = row.get("age", "Unknown")
+            gender = row.get("gender", "Unknown")
+            diagnoses = row.get("diagnoses", "None")
+            labs = row.get("labs", "None")
+            medications = row.get("medications", "None")
+            context = (f"Patient EHR Snapshot:\n"
+                       f"Age/Gender: {age} {gender}\n"
+                       f"Diagnoses: {diagnoses}\n"
+                       f"Labs: {labs}\n"
+                       f"Medications: {medications}")
 
         messages = [
-            {"role": "user", "content": user_msg},
-            {"role": assistant_role, "content": str(row['answer'])}
+            {"role": "user", "content": build_user_message(context, row["question"])},
+            {"role": assistant_role, "content": str(row["answer"])}
         ]
 
         formatted_text = tokenizer.apply_chat_template(messages, tokenize=False)
         return {"text": formatted_text}
 
     dataset = Dataset.from_pandas(df)
-    dataset = dataset.map(format_prompt, desc="Formatting Prompts")
+    dataset = dataset.map(format_prompt, desc="Formatting Prompts (retrieval-augmented)")
+    retriever.close()
+    # Free the retriever's GPU-resident embedding model before SFTTrainer
+    # allocates for the (much larger) MedGemma model — this project targets
+    # a 6 GB VRAM card, so freeing the small embedding model's memory here
+    # is cheap insurance against VRAM contention with the 4-bit QLoRA model
+    # already loaded by setup_model_and_tokenizer().
+    del retriever
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    failure_rate = n_retrieval_failures / max(num_samples, 1)
+    print(f"[INFO] Training context mode distribution: "
+          f"{pd.Series(mode_assignments).value_counts().to_dict()}")
+    print(f"[INFO] Retrieval fallback rate: {n_retrieval_failures}/{num_samples} "
+          f"({failure_rate:.1%})")
+    if failure_rate > 0.05:
+        print("[WARN] More than 5% of training examples fell back to the "
+              "non-retrieval-augmented context format. This weakens the "
+              "train/inference alignment fix — investigate before treating "
+              "this as the final fine-tune run.")
+
+    dataset = dataset.remove_columns(["_context_mode"])
     dataset = dataset.train_test_split(test_size=0.1, seed=SEED)
 
     print(f"[INFO] Train size : {len(dataset['train'])} samples")
     print(f"[INFO] Eval size  : {len(dataset['test'])} samples")
-    return dataset
+    return dataset, dict(pd.Series(mode_assignments).value_counts()), failure_rate
 
 
 # ── Model Initialization ──────────────────────────────────────────────────────
@@ -346,7 +451,8 @@ def _get_version(pkg_name: str) -> str:
 
 
 def save_training_metadata(peft_config: LoraConfig, training_args: SFTConfig,
-                            epochs: int, learning_rate: float):
+                            epochs: int, learning_rate: float,
+                            context_mode_distribution: dict, retrieval_failure_rate: float):
     """
     Persists a JSON manifest alongside the saved adapters capturing everything
     needed to reproduce this run: model id, dataset path, LoRA config,
@@ -355,7 +461,9 @@ def save_training_metadata(peft_config: LoraConfig, training_args: SFTConfig,
     metadata = {
         "model_id": MODEL_ID,
         "dataset_path": str(DATA_PATH),
-        "context_mode": CONTEXT_MODE,
+        "context_mode_weights": CONTEXT_MODE_WEIGHTS,
+        "context_mode_distribution": context_mode_distribution,
+        "retrieval_fallback_rate": retrieval_failure_rate,
         "lora_config": {
             "r": peft_config.r,
             "lora_alpha": peft_config.lora_alpha,
@@ -402,7 +510,7 @@ def main():
     torch_dtype, use_bf16, use_fp16 = detect_mixed_precision()
 
     model, tokenizer, peft_config = setup_model_and_tokenizer(torch_dtype)
-    dataset = load_and_prep_data(tokenizer)
+    dataset, context_mode_distribution, retrieval_failure_rate = load_and_prep_data(tokenizer)
 
     # Calculate estimated steps (ceil so a trailing partial batch is counted)
     batch_size = 1
@@ -497,7 +605,8 @@ def main():
     trainer.model.save_pretrained(str(OUTPUT_DIR))
     tokenizer.save_pretrained(str(OUTPUT_DIR))
     trainer.save_state()
-    save_training_metadata(peft_config, training_args, epochs, learning_rate)
+    save_training_metadata(peft_config, training_args, epochs, learning_rate,
+                            context_mode_distribution, retrieval_failure_rate)
     print("[INFO] ✅ Saved successfully.")
 
 

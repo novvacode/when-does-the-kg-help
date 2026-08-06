@@ -10,6 +10,7 @@ Retrieval Layer — implements all 3 retrieval modes.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -23,6 +24,8 @@ import torch
 from sentence_transformers import SentenceTransformer
 
 from src.lakehouse.patient_snapshot import PatientSnapshot
+
+logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -217,8 +220,8 @@ class Retriever:
                         if str(d).strip():
                             dx_texts.append(str(d).strip())
                             
-            print(f"[DEBUG] RAW SNAPSHOT DIAGNOSES: {raw_dx}")
-            print(f"[DEBUG] DX TEXTS SENT TO KG: {dx_texts}")
+            logger.debug(f"RAW SNAPSHOT DIAGNOSES: {raw_dx}")
+            logger.debug(f"DX TEXTS SENT TO KG: {dx_texts}")
 
             # Try to log matched diseases by looking up the driver locally
             if hasattr(self._kg, 'get_driver') and hasattr(self._kg, 'find_matching_diseases'):
@@ -226,27 +229,29 @@ class Retriever:
                     driver = self._kg.get_driver()
                     with driver.session() as session:
                         matched = self._kg.find_matching_diseases(session, dx_texts)[:3]
-                    print(f"[DEBUG] MATCHED KG DISEASES: {matched}")
+                    logger.debug(f"MATCHED KG DISEASES: {matched}")
                 except Exception:
                     pass
 
             # Call the Phase 2 functional entry point
             context_str = self._kg.retrieve_kg_context(dx_texts, max_diseases=3)
-            
+
             if "No relevant" in context_str or not context_str.strip():
-                print(f"[DEBUG] retrieve_kg_context returned no facts.")
-                print(f"[DEBUG] DX texts used for matching: {dx_texts}")
-                print(f"[DEBUG] NUMBER OF KG FACTS: 0")
+                logger.debug(f"retrieve_kg_context returned no facts for dx_texts={dx_texts}")
                 return []
-                
-            # Split the paragraph back into individual facts for cleaner formatting
+
+            # Split the paragraph back into individual facts for cleaner formatting.
+            # NOTE: naive '.' splitting will incorrectly break on decimal values
+            # inside a fact (e.g. "eGFR<30.5") — acceptable for now since KG facts
+            # are template-generated without decimals, but flagged for anyone
+            # changing retrieve_kg_context's fact templates.
             facts = [f.strip() + "." for f in context_str.split('.') if f.strip()]
-            print(f"[DEBUG] NUMBER OF KG FACTS: {len(facts)}")
-            
+            logger.debug(f"NUMBER OF KG FACTS: {len(facts)}")
+
             return facts
-            
+
         except Exception as e:
-            print(f"[Retriever] KG retrieval failed for hadm_id={hadm_id}: {e}")
+            logger.warning(f"KG retrieval failed for hadm_id={hadm_id}: {e}")
             return []
 
     @staticmethod

@@ -9,9 +9,18 @@ from transformers import (
 
 from peft import PeftModel
 
+from src.model.prompts import build_user_message
+
 # ==========================================================
 # Configuration
 # ==========================================================
+# NOTE: this is a manual, single-example smoke-test script, not part of the
+# pipeline in README's "Running the Pipeline" steps. As of the 2026-08-06
+# audit fix, actual training/eval prompts are retrieval-augmented (built via
+# src.retrieval.retriever.Retriever, see src/model/train_qlora.py and
+# src/evaluation/run_evaluation.py) — the flattened EHR-snapshot context
+# below is a simplified approximation for a quick manual check, not the
+# real training/inference format.
 
 BASE_MODEL = "google/medgemma-1.5-4b-it"
 ADAPTER_PATH = "models/medgemma-4b-qlora"
@@ -46,10 +55,7 @@ context = (
     f"Medications: {row['medications']}"
 )
 
-user_prompt = (
-    f"Context:\n{context}\n\n"
-    f"Question: {row['question']}"
-)
+user_prompt = build_user_message(context, row["question"])
 
 # ==========================================================
 # Load Tokenizer
