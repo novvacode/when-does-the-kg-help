@@ -64,11 +64,14 @@ Clinical Question + Patient ID
    Grounded Clinical Answer
 ```
 
-| Mode | When the Router Chooses It |
+| Mode | When the Router Actually Chooses It (measured on held-out data) |
 |---|---|
-| **T** — Text only | Definitional questions; dense, note-rich patients |
-| **T+E** — Text + EHR | Patient-specific questions with rich structured data |
-| **T+E+K** — Text + EHR + KG | Sparse EHR; complex disease–drug interactions; gap-filling |
+| **T** — Text only | 74/300 (24.7%) — mostly lab questions where the patient has no recorded labs, so the EHR snapshot adds nothing |
+| **T+E** — Text + EHR | 174/300 (58.0%) — the majority case: extractive questions whose answer is a structured EHR field |
+| **T+E+K** — Text + EHR + KG | 52/300 (17.3%) — guideline/relational questions (contraindications, monitoring panels) |
+
+> These are the router's observed decisions, not design intent. Note it does
+> **not** route to T+E+K on sparse EHRs — see the H2 result below.
 
 ---
 
@@ -227,7 +230,7 @@ you would expect under this explanation and not under genuine leakage.
 ## Project Structure
 
 ```
-med-rag-router/
+when-does-the-kg-help/
 │
 ├── src/
 │   ├── lakehouse/
@@ -318,8 +321,8 @@ med-rag-router/
 **Prerequisites:** Miniconda, NVIDIA GPU with CUDA 12.1+, Neo4j Desktop
 
 ```bash
-git clone https://github.com/novvacode/med-rag-router.git
-cd med-rag-router
+git clone https://github.com/novvacode/when-does-the-kg-help.git
+cd when-does-the-kg-help
 ```
 
 ```bash
@@ -564,7 +567,7 @@ verification are still outstanding.
   author = {Daksh},
   year   = {2026},
   note   = {M.Tech thesis work, MAHE Bengaluru},
-  url    = {https://github.com/novvacode/med-rag-router}
+  url    = {https://github.com/novvacode/when-does-the-kg-help}
 }
 ```
 
