@@ -8,17 +8,27 @@ Acute Kidney Injury,Chloride,63901,65019,0.9828050262231041
 Acute Kidney Injury,Bicarbonate,63883,65019,0.982528184069272
 Acute Kidney Injury,Anion Gap,63880,65019,0.9824820437103
 Acute Kidney Injury,Hematocrit,63580,65019,0.9778680078131008
+Acute Kidney Injury,Platelet Count,63544,65019,0.9773143235054369
 Acute Kidney Injury,Hemoglobin,63544,65019,0.9773143235054369
+Acute Kidney Injury,White Blood Cells,63536,65019,0.9771912825481782
+Acute Kidney Injury,MCHC,63525,65019,0.9770221012319475
+Acute Kidney Injury,MCV,63524,65019,0.9770067211122903
+Acute Kidney Injury,Red Blood Cells,63524,65019,0.9770067211122903
 Anemia,Hematocrit,67521,70638,0.9558736091055806
 Anemia,Platelet Count,67179,70638,0.9510320224241909
 Anemia,Hemoglobin,67150,70638,0.950621478524307
 Anemia,White Blood Cells,67100,70638,0.9499136442141624
 Anemia,MCHC,67090,70638,0.9497720773521334
-Anemia,MCH,67090,70638,0.9497720773521334
 Anemia,Red Blood Cells,67090,70638,0.9497720773521334
+Anemia,MCH,67090,70638,0.9497720773521334
 Anemia,MCV,67090,70638,0.9497720773521334
 Anemia,RDW,67089,70638,0.9497579206659306
 Anemia,Creatinine,66544,70638,0.9420425266853535
+Anemia,Glucose,66471,70638,0.9410090885925423
+Anemia,Urea Nitrogen,66371,70638,0.9395934199722529
+Anemia,Potassium,66358,70638,0.9394093830516153
+Anemia,Sodium,66284,70638,0.9383617882726012
+Anemia,Chloride,66256,70638,0.9379654010589201
 Atrial Fibrillation,Potassium,73831,79779,0.9254440391581744
 Atrial Fibrillation,Creatinine,73818,79779,0.9252810890083857
 Atrial Fibrillation,Urea Nitrogen,73719,79779,0.9240401609446095
@@ -29,6 +39,11 @@ Atrial Fibrillation,Platelet Count,72962,79779,0.9145514483761391
 Atrial Fibrillation,Bicarbonate,72944,79779,0.9143258250918161
 Atrial Fibrillation,Anion Gap,72940,79779,0.9142756865841888
 Atrial Fibrillation,Glucose,72836,79779,0.9129720853858785
+Atrial Fibrillation,Hemoglobin,72608,79779,0.9101141904511212
+Atrial Fibrillation,White Blood Cells,72550,79779,0.909387182090525
+Atrial Fibrillation,RDW,72500,79779,0.9087604507451835
+Atrial Fibrillation,MCH,72500,79779,0.9087604507451835
+Atrial Fibrillation,MCV,72500,79779,0.9087604507451835
 Bipolar Disorder,Glucose,6102,9202,0.6631167137578787
 Bipolar Disorder,Creatinine,6024,9202,0.6546402955879157
 Bipolar Disorder,Hematocrit,6022,9202,0.6544229515322756
@@ -38,17 +53,27 @@ Bipolar Disorder,Urea Nitrogen,5972,9202,0.6489893501412737
 Bipolar Disorder,White Blood Cells,5965,9202,0.6482286459465334
 Bipolar Disorder,MCH,5963,9202,0.6480113018908933
 Bipolar Disorder,MCV,5963,9202,0.6480113018908933
+Bipolar Disorder,Red Blood Cells,5963,9202,0.6480113018908933
 Bipolar Disorder,RDW,5963,9202,0.6480113018908933
+Bipolar Disorder,MCHC,5963,9202,0.6480113018908933
+Bipolar Disorder,Potassium,5953,9202,0.6469245816126928
+Bipolar Disorder,Sodium,5947,9202,0.6462725494457726
+Bipolar Disorder,Chloride,5939,9202,0.6454031732232124
 Chronic Hepatitis C,Glucose,6188,7424,0.8335129310344828
 Chronic Hepatitis C,Hematocrit,6188,7424,0.8335129310344828
 Chronic Hepatitis C,Platelet Count,6162,7424,0.830010775862069
 Chronic Hepatitis C,Hemoglobin,6161,7424,0.8298760775862069
 Chronic Hepatitis C,White Blood Cells,6156,7424,0.8292025862068966
-Chronic Hepatitis C,MCHC,6154,7424,0.8289331896551724
-Chronic Hepatitis C,Red Blood Cells,6154,7424,0.8289331896551724
-Chronic Hepatitis C,RDW,6154,7424,0.8289331896551724
 Chronic Hepatitis C,MCV,6154,7424,0.8289331896551724
+Chronic Hepatitis C,RDW,6154,7424,0.8289331896551724
+Chronic Hepatitis C,MCHC,6154,7424,0.8289331896551724
 Chronic Hepatitis C,MCH,6154,7424,0.8289331896551724
+Chronic Hepatitis C,Red Blood Cells,6154,7424,0.8289331896551724
+Chronic Hepatitis C,Creatinine,6151,7424,0.8285290948275862
+Chronic Hepatitis C,Urea Nitrogen,6142,7424,0.8273168103448276
+Chronic Hepatitis C,Potassium,6134,7424,0.826239224137931
+Chronic Hepatitis C,Sodium,6131,7424,0.8258351293103449
+Chronic Hepatitis C,Chloride,6129,7424,0.8255657327586207
 Chronic Kidney Disease Stage 3,Creatinine,19876,20632,0.9633578906552928
 Chronic Kidney Disease Stage 3,Potassium,19860,20632,0.962582396277627
 Chronic Kidney Disease Stage 3,Urea Nitrogen,19840,20632,0.9616130283055447
@@ -59,26 +84,41 @@ Chronic Kidney Disease Stage 3,Platelet Count,19637,20632,0.9517739433889104
 Chronic Kidney Disease Stage 3,Bicarbonate,19614,20632,0.9506591702210159
 Chronic Kidney Disease Stage 3,Anion Gap,19614,20632,0.9506591702210159
 Chronic Kidney Disease Stage 3,Glucose,19593,20632,0.9496413338503296
+Chronic Kidney Disease Stage 3,Hemoglobin,19466,20632,0.9434858472276076
+Chronic Kidney Disease Stage 3,White Blood Cells,19446,20632,0.9425164792555254
+Chronic Kidney Disease Stage 3,MCV,19432,20632,0.9418379216750679
+Chronic Kidney Disease Stage 3,MCH,19432,20632,0.9418379216750679
+Chronic Kidney Disease Stage 3,RDW,19432,20632,0.9418379216750679
 Chronic Kidney Disease Stage 4,Creatinine,6608,6799,0.9719076334755111
 Chronic Kidney Disease Stage 4,Potassium,6606,6799,0.9716134725694955
 Chronic Kidney Disease Stage 4,Urea Nitrogen,6599,6799,0.970583909398441
 Chronic Kidney Disease Stage 4,Sodium,6594,6799,0.969848507133402
 Chronic Kidney Disease Stage 4,Chloride,6589,6799,0.969113104868363
 Chronic Kidney Disease Stage 4,Glucose,6577,6799,0.9673481394322695
-Chronic Kidney Disease Stage 4,Anion Gap,6576,6799,0.9672010589792617
 Chronic Kidney Disease Stage 4,Bicarbonate,6576,6799,0.9672010589792617
+Chronic Kidney Disease Stage 4,Anion Gap,6576,6799,0.9672010589792617
 Chronic Kidney Disease Stage 4,Hematocrit,6552,6799,0.9636711281070746
 Chronic Kidney Disease Stage 4,Platelet Count,6534,6799,0.9610236799529343
-Chronic Kidney Disease Stage 5,Creatinine,1639,1684,0.9732779097387173
+Chronic Kidney Disease Stage 4,Hemoglobin,6523,6799,0.9594057949698485
+Chronic Kidney Disease Stage 4,White Blood Cells,6517,6799,0.9585233122518018
+Chronic Kidney Disease Stage 4,Red Blood Cells,6513,6799,0.9579349904397706
+Chronic Kidney Disease Stage 4,RDW,6513,6799,0.9579349904397706
+Chronic Kidney Disease Stage 4,MCHC,6513,6799,0.9579349904397706
 Chronic Kidney Disease Stage 5,Potassium,1639,1684,0.9732779097387173
-Chronic Kidney Disease Stage 5,Bicarbonate,1638,1684,0.9726840855106889
-Chronic Kidney Disease Stage 5,Sodium,1638,1684,0.9726840855106889
+Chronic Kidney Disease Stage 5,Creatinine,1639,1684,0.9732779097387173
 Chronic Kidney Disease Stage 5,Chloride,1638,1684,0.9726840855106889
+Chronic Kidney Disease Stage 5,Sodium,1638,1684,0.9726840855106889
 Chronic Kidney Disease Stage 5,Urea Nitrogen,1638,1684,0.9726840855106889
 Chronic Kidney Disease Stage 5,Anion Gap,1638,1684,0.9726840855106889
+Chronic Kidney Disease Stage 5,Bicarbonate,1638,1684,0.9726840855106889
 Chronic Kidney Disease Stage 5,Glucose,1636,1684,0.9714964370546318
 Chronic Kidney Disease Stage 5,Hematocrit,1621,1684,0.9625890736342043
 Chronic Kidney Disease Stage 5,Platelet Count,1619,1684,0.9614014251781473
+Chronic Kidney Disease Stage 5,Hemoglobin,1617,1684,0.9602137767220903
+Chronic Kidney Disease Stage 5,Red Blood Cells,1617,1684,0.9602137767220903
+Chronic Kidney Disease Stage 5,MCH,1617,1684,0.9602137767220903
+Chronic Kidney Disease Stage 5,MCV,1617,1684,0.9602137767220903
+Chronic Kidney Disease Stage 5,RDW,1617,1684,0.9602137767220903
 Chronic Obstructive Pulmonary Disease,Creatinine,33231,36119,0.9200420831141505
 Chronic Obstructive Pulmonary Disease,Potassium,33191,36119,0.9189346327417702
 Chronic Obstructive Pulmonary Disease,Hematocrit,33160,36119,0.9180763587031756
@@ -89,16 +129,26 @@ Chronic Obstructive Pulmonary Disease,Platelet Count,32946,36119,0.9121514992109
 Chronic Obstructive Pulmonary Disease,Glucose,32932,36119,0.9117638915806086
 Chronic Obstructive Pulmonary Disease,Bicarbonate,32871,36119,0.9100750297627288
 Chronic Obstructive Pulmonary Disease,Anion Gap,32866,36119,0.9099365984661812
+Chronic Obstructive Pulmonary Disease,Hemoglobin,32840,36119,0.9092167557241341
+Chronic Obstructive Pulmonary Disease,White Blood Cells,32771,36119,0.9073064038317783
+Chronic Obstructive Pulmonary Disease,RDW,32747,36119,0.9066419336083502
+Chronic Obstructive Pulmonary Disease,Red Blood Cells,32747,36119,0.9066419336083502
+Chronic Obstructive Pulmonary Disease,MCHC,32747,36119,0.9066419336083502
 Cirrhosis of Liver,Hematocrit,11530,12241,0.941916510089045
 Cirrhosis of Liver,Creatinine,11506,12241,0.9399558859570296
 Cirrhosis of Liver,Hemoglobin,11501,12241,0.9395474225961932
 Cirrhosis of Liver,Platelet Count,11498,12241,0.9393023445796912
-Cirrhosis of Liver,Glucose,11497,12241,0.9392206519075239
 Cirrhosis of Liver,Potassium,11497,12241,0.9392206519075239
+Cirrhosis of Liver,Glucose,11497,12241,0.9392206519075239
 Cirrhosis of Liver,Urea Nitrogen,11492,12241,0.9388121885466874
 Cirrhosis of Liver,Sodium,11492,12241,0.9388121885466874
 Cirrhosis of Liver,Chloride,11490,12241,0.9386488032023528
 Cirrhosis of Liver,White Blood Cells,11490,12241,0.9386488032023528
+Cirrhosis of Liver,MCH,11487,12241,0.9384037251858508
+Cirrhosis of Liver,RDW,11487,12241,0.9384037251858508
+Cirrhosis of Liver,Red Blood Cells,11487,12241,0.9384037251858508
+Cirrhosis of Liver,MCV,11487,12241,0.9384037251858508
+Cirrhosis of Liver,MCHC,11487,12241,0.9384037251858508
 Congestive Heart Failure,Potassium,76780,80611,0.9524754686085025
 Congestive Heart Failure,Creatinine,76746,80611,0.9520536899430598
 Congestive Heart Failure,Urea Nitrogen,76681,80611,0.9512473483767724
@@ -109,6 +159,11 @@ Congestive Heart Failure,Bicarbonate,76053,80611,0.9434568483209488
 Congestive Heart Failure,Anion Gap,76051,80611,0.9434320378112169
 Congestive Heart Failure,Glucose,75961,80611,0.9423155648732803
 Congestive Heart Failure,Platelet Count,75956,80611,0.9422535385989506
+Congestive Heart Failure,Hemoglobin,75592,80611,0.9377380258277407
+Congestive Heart Failure,White Blood Cells,75549,80611,0.9372045998685044
+Congestive Heart Failure,MCHC,75510,80611,0.9367207949287318
+Congestive Heart Failure,RDW,75509,80611,0.9367083896738658
+Congestive Heart Failure,MCV,75509,80611,0.9367083896738658
 Coronary Artery Disease,Potassium,91228,99754,0.9145297431681938
 Coronary Artery Disease,Creatinine,91227,99754,0.9145197185075286
 Coronary Artery Disease,Urea Nitrogen,91030,99754,0.912544860356477
@@ -119,16 +174,26 @@ Coronary Artery Disease,Chloride,89955,99754,0.9017683501413477
 Coronary Artery Disease,Glucose,88567,99754,0.8878541211379994
 Coronary Artery Disease,Bicarbonate,88494,99754,0.8871223209094372
 Coronary Artery Disease,Anion Gap,88487,99754,0.8870521482847805
+Coronary Artery Disease,Hemoglobin,88133,99754,0.8835034184092868
+Coronary Artery Disease,White Blood Cells,88026,99754,0.8824307797181066
+Coronary Artery Disease,MCHC,87961,99754,0.8817791767748662
+Coronary Artery Disease,MCH,87960,99754,0.8817691521142009
+Coronary Artery Disease,RDW,87960,99754,0.8817691521142009
 Deep Vein Thrombosis,Hematocrit,8253,8511,0.9696862883327458
 Deep Vein Thrombosis,Platelet Count,8246,8511,0.9688638232875103
 Deep Vein Thrombosis,Hemoglobin,8246,8511,0.9688638232875103
-Deep Vein Thrombosis,Red Blood Cells,8242,8511,0.9683938432616613
 Deep Vein Thrombosis,White Blood Cells,8242,8511,0.9683938432616613
+Deep Vein Thrombosis,Red Blood Cells,8242,8511,0.9683938432616613
+Deep Vein Thrombosis,MCH,8242,8511,0.9683938432616613
+Deep Vein Thrombosis,MCV,8242,8511,0.9683938432616613
 Deep Vein Thrombosis,MCHC,8242,8511,0.9683938432616613
 Deep Vein Thrombosis,RDW,8242,8511,0.9683938432616613
-Deep Vein Thrombosis,MCV,8242,8511,0.9683938432616613
-Deep Vein Thrombosis,MCH,8242,8511,0.9683938432616613
 Deep Vein Thrombosis,Creatinine,8230,8511,0.9669839031841146
+Deep Vein Thrombosis,Glucose,8221,8511,0.9659264481259546
+Deep Vein Thrombosis,Urea Nitrogen,8220,8511,0.9658089531194924
+Deep Vein Thrombosis,Potassium,8218,8511,0.965573963106568
+Deep Vein Thrombosis,Sodium,8214,8511,0.9651039830807191
+Deep Vein Thrombosis,Chloride,8214,8511,0.9651039830807191
 Essential Hypertension,Hematocrit,160056,190069,0.8420941868479341
 Essential Hypertension,Creatinine,159662,190069,0.8400212554388143
 Essential Hypertension,Potassium,159176,190069,0.8374642892844177
@@ -139,16 +204,26 @@ Essential Hypertension,Chloride,157985,190069,0.8311981438319768
 Essential Hypertension,Glucose,157438,190069,0.8283202415964729
 Essential Hypertension,Hemoglobin,157177,190069,0.8269470560691118
 Essential Hypertension,White Blood Cells,156672,190069,0.8242901262173211
+Essential Hypertension,MCHC,156568,190069,0.8237429565052692
+Essential Hypertension,MCV,156565,190069,0.8237271727635753
+Essential Hypertension,Red Blood Cells,156565,190069,0.8237271727635753
+Essential Hypertension,MCH,156565,190069,0.8237271727635753
+Essential Hypertension,RDW,156564,190069,0.8237219115163441
 Gastroesophageal Reflux Disease,Hematocrit,53374,58763,0.9082926331194799
 Gastroesophageal Reflux Disease,Creatinine,53098,58763,0.9035958000782806
 Gastroesophageal Reflux Disease,Hemoglobin,53029,58763,0.9024215918179807
 Gastroesophageal Reflux Disease,Platelet Count,52878,58763,0.8998519476541361
 Gastroesophageal Reflux Disease,White Blood Cells,52721,58763,0.8971801984241785
-Gastroesophageal Reflux Disease,MCHC,52709,58763,0.8969759882919525
 Gastroesophageal Reflux Disease,Red Blood Cells,52709,58763,0.8969759882919525
-Gastroesophageal Reflux Disease,RDW,52709,58763,0.8969759882919525
 Gastroesophageal Reflux Disease,MCH,52709,58763,0.8969759882919525
+Gastroesophageal Reflux Disease,MCHC,52709,58763,0.8969759882919525
 Gastroesophageal Reflux Disease,MCV,52709,58763,0.8969759882919525
+Gastroesophageal Reflux Disease,RDW,52709,58763,0.8969759882919525
+Gastroesophageal Reflux Disease,Potassium,52689,58763,0.8966356380715756
+Gastroesophageal Reflux Disease,Urea Nitrogen,52634,58763,0.8956996749655396
+Gastroesophageal Reflux Disease,Sodium,52558,58763,0.8944063441281078
+Gastroesophageal Reflux Disease,Glucose,52545,58763,0.8941851164848629
+Gastroesophageal Reflux Disease,Chloride,52460,58763,0.8927386280482617
 Hyperlipidemia,Creatinine,161353,180951,0.8916944366154373
 Hyperlipidemia,Hematocrit,161289,180951,0.8913407497057214
 Hyperlipidemia,Potassium,161032,180951,0.8899204757088935
@@ -159,26 +234,41 @@ Hyperlipidemia,Chloride,159575,180951,0.8818685721548928
 Hyperlipidemia,Glucose,158379,180951,0.8752590480295771
 Hyperlipidemia,Hemoglobin,158044,180951,0.873407718111533
 Hyperlipidemia,Bicarbonate,157962,180951,0.8729545567584595
+Hyperlipidemia,Anion Gap,157951,180951,0.8728937668208521
+Hyperlipidemia,White Blood Cells,157576,180951,0.8708213825842355
+Hyperlipidemia,MCHC,157467,180951,0.8702190095661256
+Hyperlipidemia,MCV,157465,180951,0.870207956850197
+Hyperlipidemia,MCH,157465,180951,0.870207956850197
 Hypothyroidism,Hematocrit,52750,59316,0.8893047407107695
 Hypothyroidism,Platelet Count,52279,59316,0.8813642187605368
 Hypothyroidism,Hemoglobin,52217,59316,0.8803189695866208
 Hypothyroidism,White Blood Cells,52100,59316,0.8783464832422955
-Hypothyroidism,MCHC,52073,59316,0.8778912940859127
-Hypothyroidism,MCH,52073,59316,0.8778912940859127
-Hypothyroidism,MCV,52073,59316,0.8778912940859127
-Hypothyroidism,Red Blood Cells,52073,59316,0.8778912940859127
 Hypothyroidism,RDW,52073,59316,0.8778912940859127
+Hypothyroidism,Red Blood Cells,52073,59316,0.8778912940859127
+Hypothyroidism,MCHC,52073,59316,0.8778912940859127
+Hypothyroidism,MCV,52073,59316,0.8778912940859127
+Hypothyroidism,MCH,52073,59316,0.8778912940859127
 Hypothyroidism,Creatinine,51920,59316,0.8753118888664104
+Hypothyroidism,Glucose,51694,59316,0.8715017870389102
+Hypothyroidism,Potassium,51580,59316,0.8695798772675164
+Hypothyroidism,Urea Nitrogen,51566,59316,0.8693438532605031
+Hypothyroidism,Sodium,51432,59316,0.8670847663362331
+Hypothyroidism,Chloride,51378,59316,0.8661743880234676
 Major Depressive Disorder,Hematocrit,67546,83328,0.8106038786482335
 Major Depressive Disorder,Hemoglobin,66996,83328,0.8040034562211982
 Major Depressive Disorder,Platelet Count,66970,83328,0.8036914362519201
 Major Depressive Disorder,White Blood Cells,66823,83328,0.8019273233486943
 Major Depressive Disorder,Creatinine,66822,83328,0.8019153225806451
 Major Depressive Disorder,MCHC,66809,83328,0.8017593125960062
-Major Depressive Disorder,MCV,66808,83328,0.801747311827957
-Major Depressive Disorder,Red Blood Cells,66808,83328,0.801747311827957
 Major Depressive Disorder,MCH,66808,83328,0.801747311827957
 Major Depressive Disorder,RDW,66808,83328,0.801747311827957
+Major Depressive Disorder,MCV,66808,83328,0.801747311827957
+Major Depressive Disorder,Red Blood Cells,66808,83328,0.801747311827957
+Major Depressive Disorder,Glucose,66799,83328,0.8016393049155146
+Major Depressive Disorder,Urea Nitrogen,66400,83328,0.7968509984639017
+Major Depressive Disorder,Potassium,66381,83328,0.7966229838709677
+Major Depressive Disorder,Sodium,66265,83328,0.7952308947772657
+Major Depressive Disorder,Chloride,66217,83328,0.7946548579109063
 Osteoarthritis,Hematocrit,21720,24178,0.8983373314583506
 Osteoarthritis,Creatinine,21636,24178,0.8948630986847548
 Osteoarthritis,Potassium,21574,24178,0.8922987840185292
@@ -189,46 +279,71 @@ Osteoarthritis,Platelet Count,21515,24178,0.8898585490942179
 Osteoarthritis,Sodium,21512,24178,0.8897344693523037
 Osteoarthritis,Chloride,21497,24178,0.8891140706427331
 Osteoarthritis,White Blood Cells,21454,24178,0.8873355943419637
+Osteoarthritis,MCHC,21445,24178,0.8869633551162214
+Osteoarthritis,MCH,21445,24178,0.8869633551162214
+Osteoarthritis,Red Blood Cells,21445,24178,0.8869633551162214
+Osteoarthritis,MCV,21445,24178,0.8869633551162214
+Osteoarthritis,RDW,21445,24178,0.8869633551162214
 Peptic Ulcer Disease,Hematocrit,1388,1483,0.9359406608226568
 Peptic Ulcer Disease,Urea Nitrogen,1387,1483,0.935266351989211
-Peptic Ulcer Disease,Potassium,1387,1483,0.935266351989211
 Peptic Ulcer Disease,Creatinine,1387,1483,0.935266351989211
+Peptic Ulcer Disease,Potassium,1387,1483,0.935266351989211
 Peptic Ulcer Disease,Glucose,1385,1483,0.9339177343223196
-Peptic Ulcer Disease,Chloride,1384,1483,0.933243425488874
 Peptic Ulcer Disease,Sodium,1384,1483,0.933243425488874
-Peptic Ulcer Disease,Hemoglobin,1383,1483,0.9325691166554282
+Peptic Ulcer Disease,Chloride,1384,1483,0.933243425488874
 Peptic Ulcer Disease,Platelet Count,1383,1483,0.9325691166554282
+Peptic Ulcer Disease,Hemoglobin,1383,1483,0.9325691166554282
+Peptic Ulcer Disease,Bicarbonate,1382,1483,0.9318948078219824
 Peptic Ulcer Disease,Anion Gap,1382,1483,0.9318948078219824
+Peptic Ulcer Disease,White Blood Cells,1382,1483,0.9318948078219824
+Peptic Ulcer Disease,Red Blood Cells,1380,1483,0.930546190155091
+Peptic Ulcer Disease,RDW,1380,1483,0.930546190155091
+Peptic Ulcer Disease,MCHC,1380,1483,0.930546190155091
 Pneumonia,Hematocrit,20316,21091,0.9632544687307383
-Pneumonia,White Blood Cells,20309,21091,0.9629225736095965
 Pneumonia,Platelet Count,20309,21091,0.9629225736095965
-Pneumonia,Red Blood Cells,20308,21091,0.9628751600208619
+Pneumonia,White Blood Cells,20309,21091,0.9629225736095965
 Pneumonia,MCHC,20308,21091,0.9628751600208619
-Pneumonia,Hemoglobin,20308,21091,0.9628751600208619
-Pneumonia,MCH,20308,21091,0.9628751600208619
+Pneumonia,Red Blood Cells,20308,21091,0.9628751600208619
 Pneumonia,MCV,20308,21091,0.9628751600208619
 Pneumonia,RDW,20308,21091,0.9628751600208619
+Pneumonia,MCH,20308,21091,0.9628751600208619
+Pneumonia,Hemoglobin,20308,21091,0.9628751600208619
 Pneumonia,Glucose,20277,21091,0.9614053387700915
+Pneumonia,Creatinine,20266,21091,0.9608837892940116
+Pneumonia,Potassium,20263,21091,0.960741548527808
+Pneumonia,Urea Nitrogen,20263,21091,0.960741548527808
+Pneumonia,Sodium,20258,21091,0.9605044805841354
+Pneumonia,Chloride,20257,21091,0.9604570669954009
 Pulmonary Embolism,Hematocrit,6564,6752,0.9721563981042654
-Pulmonary Embolism,MCH,6559,6752,0.9714158767772512
-Pulmonary Embolism,RDW,6559,6752,0.9714158767772512
-Pulmonary Embolism,MCV,6559,6752,0.9714158767772512
-Pulmonary Embolism,White Blood Cells,6559,6752,0.9714158767772512
 Pulmonary Embolism,MCHC,6559,6752,0.9714158767772512
-Pulmonary Embolism,Hemoglobin,6559,6752,0.9714158767772512
 Pulmonary Embolism,Red Blood Cells,6559,6752,0.9714158767772512
+Pulmonary Embolism,RDW,6559,6752,0.9714158767772512
+Pulmonary Embolism,Hemoglobin,6559,6752,0.9714158767772512
+Pulmonary Embolism,MCV,6559,6752,0.9714158767772512
 Pulmonary Embolism,Platelet Count,6559,6752,0.9714158767772512
+Pulmonary Embolism,MCH,6559,6752,0.9714158767772512
+Pulmonary Embolism,White Blood Cells,6559,6752,0.9714158767772512
 Pulmonary Embolism,Creatinine,6535,6752,0.9678613744075829
+Pulmonary Embolism,Urea Nitrogen,6532,6752,0.9674170616113744
+Pulmonary Embolism,Potassium,6529,6752,0.9669727488151659
+Pulmonary Embolism,Sodium,6527,6752,0.9666765402843602
+Pulmonary Embolism,Glucose,6525,6752,0.9663803317535545
+Pulmonary Embolism,Chloride,6525,6752,0.9663803317535545
 Sepsis,Glucose,12357,12543,0.9851710117196842
 Sepsis,Hematocrit,12350,12543,0.9846129315155864
 Sepsis,Hemoglobin,12349,12543,0.9845332057721439
 Sepsis,Creatinine,12348,12543,0.9844534800287013
 Sepsis,White Blood Cells,12347,12543,0.9843737542852588
-Sepsis,Platelet Count,12346,12543,0.9842940285418161
 Sepsis,MCV,12346,12543,0.9842940285418161
-Sepsis,MCHC,12346,12543,0.9842940285418161
+Sepsis,RDW,12346,12543,0.9842940285418161
+Sepsis,Platelet Count,12346,12543,0.9842940285418161
 Sepsis,MCH,12346,12543,0.9842940285418161
 Sepsis,Red Blood Cells,12346,12543,0.9842940285418161
+Sepsis,MCHC,12346,12543,0.9842940285418161
+Sepsis,Urea Nitrogen,12344,12543,0.984134577054931
+Sepsis,Sodium,12343,12543,0.9840548513114885
+Sepsis,Potassium,12342,12543,0.9839751255680459
+Sepsis,Chloride,12341,12543,0.9838953998246034
 Type 2 Diabetes Mellitus,Creatinine,113107,128269,0.8817952895867279
 Type 2 Diabetes Mellitus,Hematocrit,112895,128269,0.8801425130000234
 Type 2 Diabetes Mellitus,Potassium,112838,128269,0.8796981343894472
@@ -239,13 +354,23 @@ Type 2 Diabetes Mellitus,Platelet Count,111958,128269,0.8728375523314285
 Type 2 Diabetes Mellitus,Glucose,111848,128269,0.8719799795741762
 Type 2 Diabetes Mellitus,Bicarbonate,111319,128269,0.8678558342233899
 Type 2 Diabetes Mellitus,Anion Gap,111312,128269,0.8678012614115648
+Type 2 Diabetes Mellitus,Hemoglobin,111225,128269,0.8671229993217379
+Type 2 Diabetes Mellitus,White Blood Cells,111016,128269,0.8654936110829585
+Type 2 Diabetes Mellitus,MCHC,110937,128269,0.8648777179209318
+Type 2 Diabetes Mellitus,Red Blood Cells,110936,128269,0.8648699218049568
+Type 2 Diabetes Mellitus,MCV,110936,128269,0.8648699218049568
 Urinary Tract Infection,Glucose,34569,37080,0.9322815533980583
 Urinary Tract Infection,Hematocrit,34383,37080,0.9272653721682848
 Urinary Tract Infection,Hemoglobin,34343,37080,0.9261866235167207
 Urinary Tract Infection,Platelet Count,34342,37080,0.9261596548004315
 Urinary Tract Infection,White Blood Cells,34339,37080,0.9260787486515641
-Urinary Tract Infection,Red Blood Cells,34335,37080,0.9259708737864077
 Urinary Tract Infection,MCH,34335,37080,0.9259708737864077
 Urinary Tract Infection,RDW,34335,37080,0.9259708737864077
-Urinary Tract Infection,MCHC,34335,37080,0.9259708737864077
 Urinary Tract Infection,MCV,34335,37080,0.9259708737864077
+Urinary Tract Infection,Red Blood Cells,34335,37080,0.9259708737864077
+Urinary Tract Infection,MCHC,34335,37080,0.9259708737864077
+Urinary Tract Infection,Creatinine,34321,37080,0.9255933117583603
+Urinary Tract Infection,Potassium,34298,37080,0.9249730312837109
+Urinary Tract Infection,Urea Nitrogen,34297,37080,0.9249460625674218
+Urinary Tract Infection,Sodium,34294,37080,0.9248651564185545
+Urinary Tract Infection,Chloride,34287,37080,0.9246763754045307

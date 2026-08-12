@@ -1,0 +1,51 @@
+edge_id,disease,edge_type,target,target_type,notes,edge_source,validated_correct,reviewer_notes
+1,Essential Hypertension,CO_OCCURS_WITH_LAB,Urea Nitrogen,LabTest,co-occurs in 83.6% of admissions,ehr_cooccurrence,Yes,BUN is routinely checked to assess renal function in hypertension.
+2,Coronary Artery Disease,CO_OCCURS_WITH_LAB,Sodium,LabTest,co-occurs in 90.4% of admissions,ehr_cooccurrence,Yes,Basic metabolic panels are standard for patients with coronary artery disease.
+3,Sepsis,CO_OCCURS_WITH_LAB,Glucose,LabTest,co-occurs in 98.5% of admissions,ehr_cooccurrence,Yes,Glucose monitoring is critical for metabolic control during sepsis.
+4,Peptic Ulcer Disease,CO_OCCURS_WITH_LAB,Hemoglobin,LabTest,co-occurs in 93.3% of admissions,ehr_cooccurrence,Yes,Hemoglobin is checked to monitor for gastrointestinal bleeding.
+5,Chronic Obstructive Pulmonary Disease,HAS_SYMPTOM,Wheezing,Symptom,,ontology,Yes,Wheezing is a hallmark clinical presentation of COPD.
+6,Type 2 Diabetes Mellitus,CO_OCCURS_WITH_LAB,Bicarbonate,LabTest,co-occurs in 86.8% of admissions,ehr_cooccurrence,Yes,Bicarbonate is checked to evaluate acid-base status and DKA risk.
+7,Chronic Kidney Disease Stage 5,CONTRAINDICATED_WITH,NSAIDs,Drug,nephrotoxic,ontology,Yes,NSAIDs are nephrotoxic and strictly contraindicated in advanced CKD.
+8,Deep Vein Thrombosis,FIRST_LINE_TREATMENT,Heparin,Drug,,ontology,Yes,Anticoagulation with heparin is standard first-line therapy for DVT.
+9,Urinary Tract Infection,CO_OCCURS_WITH_LAB,Hematocrit,LabTest,co-occurs in 92.7% of admissions,ehr_cooccurrence,Partial,"CBC is often ordered, but hematocrit is not specific to UTI."
+10,Congestive Heart Failure,CO_OCCURS_WITH_LAB,Sodium,LabTest,co-occurs in 94.9% of admissions,ehr_cooccurrence,Yes,Hyponatremia is a common and prognostically significant finding in CHF.
+11,Coronary Artery Disease,CO_OCCURS_WITH_LAB,Potassium,LabTest,co-occurs in 91.5% of admissions,ehr_cooccurrence,Yes,"Potassium must be monitored, especially with concurrent diuretic use."
+12,Pulmonary Embolism,INDICATES_LAB,D-Dimer,LabTest,,ontology,Yes,D-dimer is a standard assay to rule out pulmonary embolism.
+13,Chronic Kidney Disease Stage 4,CO_OCCURS_WITH_LAB,Creatinine,LabTest,co-occurs in 97.2% of admissions,ehr_cooccurrence,Yes,Creatinine is the primary biomarker for evaluating kidney function.
+14,Deep Vein Thrombosis,CO_OCCURS_WITH_LAB,RDW,LabTest,co-occurs in 96.8% of admissions,ehr_cooccurrence,Partial,"CBC is routinely ordered, but RDW is not specific for DVT."
+15,Peptic Ulcer Disease,CONTRAINDICATED_WITH,NSAIDs,Drug,worsens ulceration,ontology,Yes,NSAIDs worsen mucosal ulceration and are clinically contraindicated.
+16,Chronic Hepatitis C,CO_OCCURS_WITH_LAB,Glucose,LabTest,co-occurs in 83.4% of admissions,ehr_cooccurrence,Partial,"Metabolic panels are common, but glucose is not specific to HCV."
+17,Anemia,CO_OCCURS_WITH_LAB,MCV,LabTest,co-occurs in 95.0% of admissions,ehr_cooccurrence,Yes,MCV is essential for classifying the morphological type of anemia.
+18,Sepsis,CO_OCCURS_WITH_LAB,Platelet Count,LabTest,co-occurs in 98.4% of admissions,ehr_cooccurrence,Yes,Thrombocytopenia is a key indicator of severity in sepsis.
+19,Type 2 Diabetes Mellitus,CO_OCCURS_WITH_LAB,Potassium,LabTest,co-occurs in 88.0% of admissions,ehr_cooccurrence,Yes,Potassium is monitored due to renal risks and insulin effects.
+20,Coronary Artery Disease,CO_OCCURS_WITH_LAB,Urea Nitrogen,LabTest,co-occurs in 91.3% of admissions,ehr_cooccurrence,Yes,BUN is routinely checked as part of basic metabolic panels.
+21,Atrial Fibrillation,HAS_SYMPTOM,Palpitations,Symptom,,ontology,Yes,Palpitations are a primary and common symptom of atrial fibrillation.
+22,Congestive Heart Failure,FIRST_LINE_TREATMENT,Furosemide,Drug,,ontology,Yes,Loop diuretics are standard therapy for fluid overload in CHF.
+23,Essential Hypertension,INDICATES_LAB,Creatinine,LabTest,,ontology,Yes,Creatinine is checked to assess for hypertensive renal damage.
+24,Cirrhosis of Liver,HAS_SYMPTOM,Ascites,Symptom,,ontology,Yes,Ascites is a major clinical complication of liver cirrhosis.
+25,Chronic Kidney Disease Stage 3,INDICATES_LAB,Creatinine,LabTest,,ontology,Yes,Creatinine is used to stage and monitor chronic kidney disease.
+26,Chronic Obstructive Pulmonary Disease,HAS_SYMPTOM,Cough,Symptom,,ontology,Yes,Chronic cough is a classic and defining symptom of COPD.
+27,Anemia,CO_OCCURS_WITH_LAB,Hematocrit,LabTest,co-occurs in 95.6% of admissions,ehr_cooccurrence,Yes,Hematocrit is a primary diagnostic measure for evaluating anemia.
+28,Sepsis,CO_OCCURS_WITH_LAB,Hematocrit,LabTest,co-occurs in 98.5% of admissions,ehr_cooccurrence,Yes,CBC including hematocrit is routinely ordered in sepsis management.
+29,Type 2 Diabetes Mellitus,HAS_SYMPTOM,Polyuria,Symptom,,ontology,Yes,Polyuria is a classic presentation of uncontrolled diabetes mellitus.
+30,Hypothyroidism,CO_OCCURS_WITH_LAB,MCH,LabTest,co-occurs in 87.8% of admissions,ehr_cooccurrence,Partial,"CBC is often ordered, but MCH is not specific to hypothyroidism."
+31,Peptic Ulcer Disease,HAS_SYMPTOM,Nausea,Symptom,,ontology,Yes,Nausea is a very common symptom of peptic ulcer disease.
+32,Chronic Kidney Disease Stage 4,INDICATES_LAB,eGFR,LabTest,,ontology,Yes,eGFR is the standard calculated measure for CKD staging.
+33,Peptic Ulcer Disease,CO_OCCURS_WITH_LAB,Hematocrit,LabTest,co-occurs in 93.6% of admissions,ehr_cooccurrence,Yes,Monitored to assess for potential occult gastrointestinal bleeding.
+34,Acute Kidney Injury,CONTRAINDICATED_WITH,NSAIDs,Drug,nephrotoxic,ontology,Yes,NSAIDs can exacerbate acute kidney injury and are contraindicated.
+35,Acute Kidney Injury,CO_OCCURS_WITH_LAB,Potassium,LabTest,co-occurs in 98.3% of admissions,ehr_cooccurrence,Yes,Hyperkalemia is a critical and common complication of AKI.
+36,Peptic Ulcer Disease,CO_OCCURS_WITH_LAB,Potassium,LabTest,co-occurs in 93.5% of admissions,ehr_cooccurrence,Partial,"BMP may be ordered, but potassium isn't specifically related."
+37,Chronic Hepatitis C,CO_OCCURS_WITH_LAB,Red Blood Cells,LabTest,co-occurs in 82.9% of admissions,ehr_cooccurrence,Partial,"CBC is commonly ordered, but RBC count isn't specific."
+38,Atrial Fibrillation,FIRST_LINE_TREATMENT,Metoprolol,Drug,rate control,ontology,Yes,Beta-blockers are standard therapy for rate control in AFib.
+39,Pulmonary Embolism,CO_OCCURS_WITH_LAB,MCH,LabTest,co-occurs in 97.1% of admissions,ehr_cooccurrence,Partial,"CBC is ordered, but MCH is not specific for PE."
+40,Hypothyroidism,CO_OCCURS_WITH_LAB,Platelet Count,LabTest,co-occurs in 88.1% of admissions,ehr_cooccurrence,Partial,"CBC is ordered, but platelet count isn't specific to hypothyroidism."
+41,Anemia,INDICATES_LAB,Hemoglobin,LabTest,,ontology,Yes,Hemoglobin is the definitive laboratory test for diagnosing anemia.
+42,Deep Vein Thrombosis,INDICATES_LAB,D-Dimer,LabTest,,ontology,Yes,D-dimer is a standard initial test to evaluate for DVT.
+43,Pulmonary Embolism,HAS_SYMPTOM,Dyspnea,Symptom,,ontology,Yes,Sudden dyspnea is a hallmark clinical symptom of pulmonary embolism.
+44,Atrial Fibrillation,CO_OCCURS_WITH_LAB,Sodium,LabTest,co-occurs in 92.2% of admissions,ehr_cooccurrence,Partial,"BMP is ordered, but sodium isn't specifically related to AFib."
+45,Acute Kidney Injury,CO_OCCURS_WITH_LAB,Glucose,LabTest,co-occurs in 98.3% of admissions,ehr_cooccurrence,Yes,Metabolic panels including glucose are routinely monitored in AKI.
+46,Chronic Kidney Disease Stage 4,HAS_SYMPTOM,Edema,Symptom,,ontology,Yes,Fluid retention causing peripheral edema is common in advanced CKD.
+47,Chronic Kidney Disease Stage 5,INDICATES_LAB,Potassium,LabTest,,ontology,Yes,Monitoring for hyperkalemia is critical in end-stage renal disease.
+48,Acute Kidney Injury,INDICATES_LAB,BUN,LabTest,,ontology,Yes,BUN is a primary marker for acute renal impairment.
+49,Hypothyroidism,HAS_SYMPTOM,Cold Intolerance,Symptom,,ontology,Yes,Cold intolerance is a classic clinical symptom of hypothyroidism.
+50,Chronic Obstructive Pulmonary Disease,INDICATES_LAB,Oxygen Saturation,LabTest,,ontology,Yes,Oxygen saturation monitoring is essential in managing COPD.

@@ -11,9 +11,12 @@
 
 # When Does the Knowledge Graph Help?
 
-### Adaptive RAG Routing for EHR-Grounded Clinical Question Answering
+### Question-Driven Retrieval Routing for EHR-Grounded Clinical Question Answering
 
-*M.Tech Research Project · MAHE Bengaluru · Target: CHIL / AMIA / EMNLP-BioNLP*
+*M.Tech Research Project · MAHE Bengaluru*
+
+**Router matches always-on hybrid KG-RAG quality (all *p* > 0.05) at 46.8% lower latency —
+but patient state adds no routing signal, and KG benefit *decreases* with EHR sparsity.**
 
 </div>
 
@@ -24,6 +27,12 @@
 Most medical RAG systems apply the same expensive retrieval pipeline to every question — text search, EHR lookup, and Knowledge Graph traversal, every single time. This is wasteful and sometimes harmful: when a patient's EHR already contains all the relevant facts, extra KG context adds noise, not signal.
 
 This project asks a sharper question: **can a learned router that decides *when* to use each retrieval source reduce both hallucinations and latency, compared to always-on hybrid KG-RAG?**
+
+We evaluated this on 300 held-out MIMIC-IV questions across seven systems. The answer is
+partly yes and partly no, and both halves are reported here: the router preserves quality
+at substantially lower cost, but it routes on the *question*, not the patient, and it gives
+up measurable grounding to do so. Two of our three pre-registered H1 criteria are met; the
+third is not. H2 is contradicted outright, with an identified mechanism.
 
 ---
 
@@ -73,23 +82,85 @@ Clinical Question + Patient ID
 
 ## Key Results
 
-> Full results available after evaluation on the held-out MIMIC-IV EHR-QA set.
-> A prior "final" evaluation run in this repo only covered a single question
-> and does not reflect real performance — see [RESEARCH_LOG.md](RESEARCH_LOG.md)
-> for the full audit that found this and the fixes applied before the real
-> held-out run.
+Held-out evaluation, **300 questions × 7 systems**, patient-disjoint from all
+training and routing data. Full analysis in [RESEARCH_LOG.md](RESEARCH_LOG.md).
 
-Evaluation compares five systems:
+| System | BLEU | ROUGE-L | BERTScore-F1 | EHR-Contra. | Unsupported | Latency (ms) | KG facts |
+|---|---|---|---|---|---|---|---|
+| T | 0.1588 | 0.2676 | 0.7937 | n/a¹ | 0.5813 | 2210 | 0.00 |
+| T+E | 0.6859 | 0.7965 | 0.9553 | 0.0247 | 0.3244 | 3341 | 0.00 |
+| T+E+K *(always-on hybrid)* | 0.7481 | 0.8630 | **0.9708** | 0.0247 | **0.1832** | 7528 | 8.88 |
+| **Router** *(ours)* | **0.7488** | **0.8632** | 0.9685 | **0.0233** | 0.2554 | **4005** | 2.04 |
+| Random | 0.5131 | 0.6272 | 0.9002 | 0.0193 | 0.3493 | 4298 | 3.27 |
+| StaticQType *(lookup baseline)* | 0.7338 | 0.8392 | 0.9634 | 0.0240 | 0.2696 | 3790 | 1.34 |
+| Oracle *(upper bound)* | 0.7497 | 0.8727 | 0.9708 | 0.0233 | 0.2552 | 3962 | 1.66 |
 
-| System | Description |
-|---|---|
-| **T** | Text-only RAG (baseline) |
-| **T+E** | Text + EHR snapshot |
-| **T+E+K** | Always-on hybrid — the system we compete against |
-| **Random** | Random mode selection (lower bound) |
-| **Router** | Our proposed adaptive system |
+¹ EHR-contradiction is **not measurable** for mode T: the detector scans the
+EHR snapshot, which mode T does not receive. It is not 0% — it is undefined.
 
-Metrics: BLEU · ROUGE-L · BERTScore-F1 · EHR-contradiction rate · KG-contradiction rate · Unsupported rate · Latency (ms) · VRAM (MB)
+### H1 — partially supported (2 of 3 pre-registered criteria)
+
+- ✅ **Quality parity with always-on hybrid.** Router vs T+E+K is
+  statistically indistinguishable on all three quality metrics
+  (BERTScore p=0.53, BLEU p=0.30, ROUGE-L p=0.39; paired Wilcoxon, n=300).
+- ✅ **46.8% lower latency** (4005 ms vs 7528 ms), by invoking the KG on only
+  **17.3%** of questions.
+- ❌ **Grounding is worse** than T+E+K. The raw unsupported-rate metric is
+  confounded with context length (pooled r = −0.52), so we also report a
+  length-controlled measure (`grounding_excess`: answer scored against its
+  real context vs a length-matched decoy). **Both agree**: raw 0.2554 vs
+  0.1832 (p=2.2e-10); length-controlled 0.5379 vs 0.6271 (p=1.2e-05). The
+  router genuinely trades grounding for latency by routing ~25% of
+  questions to a weaker mode. This is a real failure, not a metric artifact.
+
+The router also **beats the static question-type lookup** on every quality
+metric and sits essentially **at the Oracle upper bound** on BLEU/ROUGE-L.
+
+**Mode T is essentially ungrounded.** Its `grounding_excess` is **0.0152** —
+a T-mode answer is barely better explained by its own retrieved passages
+than by an unrelated context of the same length.
+
+### What drives the routing (feature ablation)
+
+| router variant | features | accuracy | macro-F1 |
+|---|---|---|---|
+| question embeddings only | 384 | 0.9200 | **0.8873** |
+| patient features only | 5 | 0.3600 | 0.3385 |
+| both (deployed) | 389 | 0.9200 | 0.8692 |
+
+Patient features contribute **nothing** (accuracy +0.0000, macro-F1 −0.0181).
+The router is a **learned question-routing policy**, not a patient-adaptive
+one: on this benchmark the optimal retrieval mode is predictable from the
+question, and patient state adds no measurable routing signal. It still
+beats an exact-match question lookup (0.92 vs 0.82) because embeddings
+generalise to unseen question phrasings, where the lookup scores 0.00.
+
+### Where the latency saving comes from
+
+| system | retrieval | generation | total |
+|---|---|---|---|
+| T+E+K | **4343 ms** | 3185 ms | 7528 ms |
+| Router | **822 ms** | 3183 ms | 4005 ms |
+
+Generation cost is identical across modes; the router's entire saving comes
+from skipping the Neo4j round-trip, which is 57.7% of T+E+K's total latency.
+
+### H2 — contradicted, with an identified mechanism
+
+KG benefit was predicted to grow with EHR sparsity. It does the opposite:
+T+E+K's BERTScore advantage over T+E is **+1.95pp in low-sparsity** and only
+**+0.57pp in high-sparsity**. Cause: KG retrieval is keyed on the patient's
+diagnosis list, so sparse EHRs supply fewer diagnoses to match and therefore
+*less* KG signal. The KG cannot fill a gap that includes its own index key.
+
+### Interpreting the absolute numbers
+
+BLEU/ROUGE/BERTScore for T+E, T+E+K and Router sit **above** the
+pre-registered target ranges. This is the extractive-answer confound, not
+leakage: ~61% of eval questions are template questions whose gold answer is
+a verbatim EHR field present in the T+E/T+E+K context. Mode T, which has no
+EHR snapshot, scores BLEU 0.1588 — inside the target range — which is what
+you would expect under this explanation and not under genuine leakage.
 
 ---
 
@@ -128,7 +199,7 @@ Metrics: BLEU · ROUGE-L · BERTScore-F1 · EHR-contradiction rate · KG-contrad
 - Base: `google/medgemma-1.5-4b-it`
 - Fine-tuning: QLoRA (r=16, α=32, NF4, target: all linear layers)
 - Training data: synthetic EHR-QA from the MIMIC-IV fine-tune patient split
-  (`data/lakehouse/qa/ehrqa_finetune.parquet`)
+  (`data/qa/ehrqa_finetune.parquet`)
 - **Training prompts are retrieval-augmented**: each example's context is
   built by calling the real `Retriever` (same code path as inference) with a
   randomly, reproducibly assigned mode (T / T+E / T+E+K, equal weight by
@@ -265,6 +336,15 @@ pip install -r requirements.txt
 
 **Neo4j:** Download [Neo4j Desktop](https://neo4j.com/download/), create a local DBMS named `mkg`, and start it before running any MKG steps.
 
+Connection settings are read from the environment — no credentials are stored in
+this repository. Set them before running any MKG step:
+
+```bash
+export NEO4J_URI="bolt://localhost:7687"   # PowerShell: $env:NEO4J_URI="..."
+export NEO4J_USER="neo4j"
+export NEO4J_PASSWORD="your-password"
+```
+
 ---
 
 ## Running the Pipeline
@@ -386,16 +466,35 @@ QLoRA (4-bit NF4 quantization) is required to fit MedGemma 1.5-4B within 6 GB VR
 
 ---
 
-## Data Access
+## Data Access and What This Repository Contains
 
-This project uses [MIMIC-IV](https://physionet.org/content/mimiciv/), a freely available but credentialed dataset.
+This project is built on [MIMIC-IV](https://physionet.org/content/mimiciv/), a
+de-identified critical-care dataset available under **credentialed access** and a
+PhysioNet Data Use Agreement that prohibits redistribution.
 
-To access MIMIC-IV:
-1. Complete the [CITI Program](https://www.citiprogram.org/) "Data or Specimens Only Research" training
-2. Register at [PhysioNet](https://physionet.org) and upload your CITI certificate
-3. Submit a credentialed access request for MIMIC-IV
+**No patient data is in this repository, and none ever should be.** The following
+are excluded by `.gitignore` and must stay local:
 
-Raw data, processed Parquet files, and fine-tuned model weights are not included in this repository. The `splits/patient_splits.json` file (patient ID assignments, seed=42) is included for reproducibility — it contains no patient data.
+| Excluded | Why |
+|---|---|
+| `data/raw/`, `data/lakehouse/` | Raw and converted MIMIC-IV tables |
+| `data/qa/`, `data/ehrqa_synthetic.*` | Generated QA pairs containing real admission IDs, diagnoses, lab values, medications, and demographics |
+| `data/router/` | Router datasets embedding clinical note text in `prompt_context` |
+| `embeddings/` | FAISS index built over clinical notes |
+| `experiments/results/`, `experiments/logs/` | Per-question outputs containing patient content |
+| `models/medgemma-4b-qlora/`, `*.safetensors` | Adapter weights fine-tuned on patient data |
+| `models/_ARCHIVE_*/` | Superseded experiment artifacts (also patient-derived) |
+
+`splits/patient_splits.json` **is** included: it holds only subject-ID integers with
+no clinical content, and it is required to reproduce the exact partition (seed 42).
+
+To obtain the data yourself: complete the [CITI](https://www.citiprogram.org/)
+"Data or Specimens Only Research" course, register at
+[PhysioNet](https://physionet.org), and submit a credentialed-access request for
+MIMIC-IV. Every artifact above is then regenerable by running the pipeline below.
+
+**This is a research prototype.** It has not been clinically validated, evaluated
+prospectively, or reviewed for safety, and must not be used to inform patient care.
 
 ---
 
@@ -409,28 +508,63 @@ Three things are needed for exact reproduction:
 
 The oracle label generation script logs the exact model version, adapter path, scoring weights, and timestamp to `experiments/results/oracle_*.json` for full traceability.
 
+### Post-hoc analysis scripts
+
+After `run_evaluation`, these reproduce every statistic in the paper:
+
+```bash
+python -m src.evaluation.analysis            # bootstrap CIs, paired Wilcoxon, latency split
+python -m src.evaluation.router_ablation     # question-only vs patient-only vs full router
+python -m src.evaluation.recompute_grounding # length-controlled grounding measure
+```
+
+### A note on reproducibility and this project's history
+
+[RESEARCH_LOG.md](RESEARCH_LOG.md) is the complete, unedited record of this
+project — every bug, audit, wrong hypothesis, and correction, in order. It is
+long and deliberately unflattering. Several headline results were overturned by
+later audits (a context-echoing generator caused by unmasked loss, a router that
+lost to a lookup table, a "patient-adaptive" claim disproved by ablation). If you
+are building on this work, read it before trusting any intermediate artifact.
+
 ---
 
-## Target Venues
+## Known Limitations
 
-| Venue | Type | Notes |
-|---|---|---|
-| [CHIL 2027](https://chilconference.org) | Conference | Primary target — ML for health, rigorous evaluation |
-| [AMIA 2026 Annual](https://amia.org) | Conference | Clinical informatics audience |
-| [EMNLP BioNLP Workshop](https://aclweb.org/aclwiki/BioNLP_Workshop) | Workshop | NLP + biomedical angle |
-| JAMIA / JBI | Journal | Extended version with clinical co-author |
+Stated plainly, because they bound what these results support:
+
+- **Questions are template-generated** from structured EHR fields, not written by
+  clinicians. For several question types the gold answer appears verbatim in the
+  T+E/T+E+K context, which inflates absolute lexical scores.
+- **Small scale**: 300 held-out questions over 61 admissions, one seed, one base
+  model, one dataset. The high-sparsity subgroup has only 30 questions.
+- **The knowledge graph is small** — 25 diseases, 215 hand-curated guideline
+  edges — not extracted from a standard biomedical ontology.
+- **Hallucination measures are automatic heuristics**, not clinician-adjudicated.
+  There is no human evaluation and no inter-annotator agreement study.
+- **EHR-contradiction is not measurable for mode T**: the detector inspects an EHR
+  snapshot that mode T never receives, so it is reported as `n/a`, not 0%.
+
+---
+
+## Paper
+
+The manuscript is in [`paper/main.tex`](paper/main.tex) (IEEEtran conference
+format). Figures live in `paper/plots/`. Author block and final reference
+verification are still outstanding.
 
 ---
 
 ## Citation
 
 ```bibtex
-@article{daksh2026adaptiverag,
-  title   = {When Does the Knowledge Graph Help? Adaptive RAG Routing
-             for EHR-Grounded Clinical Question Answering},
-  author  = {Daksh},
-  journal = {Work in Progress — M.Tech Thesis, MAHE Bengaluru},
-  year    = {2026}
+@misc{medragrouter2026,
+  title  = {When Does the Knowledge Graph Help? Question-Driven Retrieval
+            Routing for EHR-Grounded Clinical Question Answering},
+  author = {Daksh},
+  year   = {2026},
+  note   = {M.Tech thesis work, MAHE Bengaluru},
+  url    = {https://github.com/novvacode/med-rag-router}
 }
 ```
 

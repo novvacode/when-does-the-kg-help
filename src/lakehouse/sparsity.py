@@ -110,6 +110,7 @@ def detect_schema(con: duckdb.DuckDBPyConnection, has_notes: bool) -> dict:
         "admissions": {
             "hadm_id":   pick(ac, ["hadm_id", "hadmid"]),
             "admittime": pick(ac, ["admittime", "admit_time"]),
+            "dischtime": pick(ac, ["dischtime", "disch_time", "dischargetime"]),
         },
         "labs": {
             "hadm_id":   pick(lc, ["hadm_id", "hadmid"]),
@@ -165,9 +166,25 @@ def sql_n_diag(schema: dict, ids_view: str) -> str:
 
 def sql_d_note(schema: dict, ids_view: str, has_notes: bool) -> str:
     """
-    d_note = days between last note and admission date.
-    FIX: admittime is fetched as ANY_VALUE inside the aggregation to
-    avoid the GROUP BY / aggregate error in DuckDB.
+    d_note = days between the LAST clinical note and DISCHARGE.
+
+    BUG FIX (2026-08-12): this previously measured from ADMISSION
+    (`admittime - last_note`). Clinical notes are written during and after
+    the admission, so that expression was almost always NEGATIVE, and the
+    `d_note > tau_days` sparsity term could then only ever fire on the 999
+    "no notes at all" sentinel. Measured on the real data: of 266
+    admissions, 111 were exactly 999, 150 were negative, and **zero** fell
+    anywhere in between — i.e. the third sparsity component had silently
+    degenerated into a has-notes/no-notes binary rather than the
+    note-staleness measure the design doc specifies ("days since last
+    clinical note before question/discharge time"). Since sparsity_bucket
+    is the independent variable for H2, this materially affected the
+    headline hypothesis. See RESEARCH_LOG.md, 2026-08-12.
+
+    Now measured from dischtime (falling back to admittime only if the
+    column is absent) and clamped at 0, so d_note is a genuine
+    non-negative staleness value: 0 = documented right up to discharge,
+    larger = documentation stopped earlier in the stay, 999 = no notes.
     """
     if not has_notes:
         return f"SELECT hadm_id, 999.0 AS d_note FROM {ids_view}"
@@ -177,28 +194,34 @@ def sql_d_note(schema: dict, ids_view: str, has_notes: bool) -> str:
     n_hadm      = n.get("hadm_id")
     n_chartdate = n.get("chartdate")
     a_hadm      = a.get("hadm_id")
-    a_admittime = a.get("admittime")
+    a_ref       = a.get("dischtime") or a.get("admittime")
 
     if not n_hadm or not n_chartdate:
         return f"SELECT hadm_id, 999.0 AS d_note FROM {ids_view}"
 
-    # Use ANY_VALUE(a.admittime) so DuckDB does not require it in GROUP BY
-    admit_expr = (
-        f"CAST(ANY_VALUE(a.{a_admittime}) AS DATE)"
-        if a_admittime
-        else "CURRENT_DATE"
+    # ANY_VALUE so DuckDB does not require the column in GROUP BY.
+    ref_expr = (
+        f"CAST(ANY_VALUE(a.{a_ref}) AS DATE)" if a_ref else "CURRENT_DATE"
     )
 
+    # NOTE the explicit NULL test rather than COALESCE(GREATEST(...), 999):
+    # DuckDB's GREATEST(NULL, 0) evaluates to 0, so wrapping the clamp in
+    # COALESCE silently destroyed the 999 "no notes at all" sentinel and
+    # collapsed every admission to d_note = 0 (high-sparsity bucket fell from
+    # 20.3% to 4.5%). Test for the NULL first, clamp second.
     return f"""
     SELECT
         h.hadm_id,
-        COALESCE(
-            DATEDIFF('day',
-                MAX(CAST(n.{n_chartdate} AS DATE)),
-                {admit_expr}
-            ),
-            999
-        ) AS d_note
+        CASE
+            WHEN MAX(CAST(n.{n_chartdate} AS DATE)) IS NULL THEN 999
+            ELSE GREATEST(
+                DATEDIFF('day',
+                    MAX(CAST(n.{n_chartdate} AS DATE)),
+                    {ref_expr}
+                ),
+                0
+            )
+        END AS d_note
     FROM {ids_view} h
     LEFT JOIN notes n       ON h.hadm_id = n.{n_hadm}
     LEFT JOIN admissions a  ON h.hadm_id = a.{a_hadm}

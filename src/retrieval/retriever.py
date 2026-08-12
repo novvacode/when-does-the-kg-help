@@ -11,6 +11,7 @@ Retrieval Layer — implements all 3 retrieval modes.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -133,7 +134,23 @@ class Retriever:
 
     @staticmethod
     def _load_model(model_name: str) -> SentenceTransformer:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # MEDRAG_EMBED_DEVICE lets a caller force the query encoder onto CPU.
+        # Motivation: run_evaluation.py keeps 4-bit MedGemma AND this encoder
+        # resident on the GPU simultaneously, whereas oracle_labels.py reads
+        # pre-built contexts from parquet and loads no encoder at all — and
+        # oracle_labels completed 300 questions cleanly (3.58 GB peak) while
+        # run_evaluation hit "CUDA error: an illegal memory access" twice.
+        # Moving this small encoder to CPU is therefore the cheapest lever on
+        # the one structural difference between the two scripts. Query
+        # encoding is a single short string, so CPU cost is minor.
+        # NOTE: CPU vs GPU embeddings differ by ~1e-6, which can in principle
+        # flip a near-tied FAISS neighbour. Do not mix devices within one
+        # evaluation run — start such a run from a clean checkpoint.
+        override = os.environ.get("MEDRAG_EMBED_DEVICE", "").strip().lower()
+        if override in {"cpu", "cuda"}:
+            device = override
+        else:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"[Retriever] Loading embedding model: {model_name} on {device}")
         return SentenceTransformer(model_name, device=device)
 
@@ -220,8 +237,22 @@ class Retriever:
                         if str(d).strip():
                             dx_texts.append(str(d).strip())
                             
+            # The QUESTION is itself a retrieval signal and was previously
+            # ignored: this method accepted `question` but matched only on
+            # the patient's ICD diagnosis strings. Measured consequence —
+            # 18/74 (24.3%) of KG-dependent questions retrieved ZERO KG
+            # facts, because a diagnosis rendered as e.g. "Hypertensive
+            # chronic kidney disease with stage 1 through stage 4..." does
+            # not clear find_matching_diseases()'s 0.6 token-overlap bar
+            # against the node "Essential Hypertension" — even though the
+            # question explicitly names that disease. All 18 are recovered
+            # by also matching on the question text. Diagnoses stay first so
+            # patient context keeps priority; the question is an additional
+            # candidate, not a replacement. See RESEARCH_LOG.md 2026-08-13.
+            dx_texts = dx_texts + [str(question)]
+
             logger.debug(f"RAW SNAPSHOT DIAGNOSES: {raw_dx}")
-            logger.debug(f"DX TEXTS SENT TO KG: {dx_texts}")
+            logger.debug(f"DX TEXTS SENT TO KG (incl. question): {dx_texts}")
 
             # Try to log matched diseases by looking up the driver locally
             if hasattr(self._kg, 'get_driver') and hasattr(self._kg, 'find_matching_diseases'):
@@ -325,7 +356,7 @@ def main() -> None:
     # Resolve hadm_id
     hadm_id = args.hadm_id
     if hadm_id is None:
-        qa_file = Path("data/lakehouse/qa/ehrqa_router_train.parquet")
+        qa_file = Path("data/qa/ehrqa_router_train.parquet")  # canonical — RESEARCH_LOG.md, 2026-08-09
         if qa_file.exists():
             df = pd.read_parquet(qa_file, columns=["hadm_id"])
             hadm_id = int(df["hadm_id"].dropna().iloc[0])

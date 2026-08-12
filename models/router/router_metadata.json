@@ -1,5 +1,5 @@
 {
-    "experiment_timestamp": "2026-07-10T23:17:44.845440",
+    "experiment_timestamp": "2026-08-10T09:59:53.841899",
     "environment_settings": {
         "seed": 42,
         "embedding_model": "BAAI/bge-small-en-v1.5"
@@ -7,41 +7,41 @@
     "dataset_profiles": {
         "training_size": 100,
         "class_distribution": {
-            "T+E": 79,
-            "T+E+K": 19,
-            "T": 2
+            "T+E": 59,
+            "T": 23,
+            "T+E+K": 18
         }
     },
     "cross_validation_performance": {
-        "best_cv_macro_f1": 0.5347768482050435,
-        "mean_cv_macro_f1": 0.5347768482050435,
-        "std_cv_macro_f1": 0.23794260156158542
+        "best_cv_macro_f1": 0.9404514665277736,
+        "mean_cv_macro_f1": 0.9404514665277736,
+        "std_cv_macro_f1": 0.018772467367666953
     },
     "inference_latency_ms": {
-        "mean": 0.648114001378417,
-        "median": 0.5577499396167696,
-        "p95": 1.049120060633868,
-        "p99": 1.7082629469223414,
-        "max": 3.516299999319017
+        "mean": 0.6743379999488752,
+        "median": 0.6277499999214342,
+        "p95": 0.8419349999940092,
+        "p99": 1.415867999976409,
+        "max": 3.343200000017532
     },
     "performance_metrics": {
-        "Accuracy": 0.6,
-        "Balanced_Accuracy": 0.6580057739284921,
-        "Macro_Precision": 0.40972222222222215,
-        "Macro_Recall": 0.6580057739284921,
-        "Macro_F1": 0.4306855934762912,
-        "Weighted_F1": 0.6332829960736938
+        "Accuracy": 0.92,
+        "Balanced_Accuracy": 0.8719806763285024,
+        "Macro_Precision": 0.8690476190476191,
+        "Macro_Recall": 0.8719806763285024,
+        "Macro_F1": 0.8692185007974483,
+        "Weighted_F1": 0.9202870813397129
     },
     "baseline_comparison_metrics": {
-        "Majority_Accuracy": 0.79,
-        "Majority_Macro_F1": 0.29422718808193665,
-        "Stratified_Accuracy": 0.68,
-        "Stratified_Macro_F1": 0.32463256907701354
+        "Majority_Accuracy": 0.59,
+        "Majority_Macro_F1": 0.24737945492662472,
+        "Stratified_Accuracy": 0.44,
+        "Stratified_Macro_F1": 0.33176624085714995
     },
     "cost_utility_analysis_units": {
-        "router_average_cost": 10.44,
-        "baseline_majority_cost": 6.15,
-        "baseline_stratified_cost": 8.9
+        "router_average_cost": 5.18,
+        "baseline_majority_cost": 9.15,
+        "baseline_stratified_cost": 12.35
     },
     "optimized_hyperparameters": {
         "objective": "multi:softprob",
@@ -57,30 +57,30 @@
         "eval_metric": "mlogloss",
         "feature_types": "None",
         "feature_weights": "None",
-        "gamma": "0.2",
+        "gamma": "0.3",
         "grow_policy": "None",
         "importance_type": "None",
         "interaction_constraints": "None",
-        "learning_rate": "0.05",
+        "learning_rate": "0.15",
         "max_bin": "None",
         "max_cat_threshold": "None",
         "max_cat_to_onehot": "None",
         "max_delta_step": "None",
-        "max_depth": "6",
+        "max_depth": "4",
         "max_leaves": "None",
-        "min_child_weight": "6",
+        "min_child_weight": "1",
         "missing": "nan",
         "monotone_constraints": "None",
         "multi_strategy": "None",
-        "n_estimators": "100",
+        "n_estimators": "300",
         "n_jobs": "None",
         "num_parallel_tree": "None",
         "random_state": "42",
-        "reg_alpha": "1.0",
-        "reg_lambda": "1.0",
+        "reg_alpha": "0.5",
+        "reg_lambda": "5.0",
         "sampling_method": "None",
         "scale_pos_weight": "None",
-        "subsample": "0.9",
+        "subsample": "1.0",
         "tree_method": "None",
         "validate_parameters": "None",
         "verbosity": "None"

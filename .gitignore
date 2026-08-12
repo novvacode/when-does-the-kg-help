@@ -1,24 +1,41 @@
-# -------------------------
-# Raw datasets
-# -------------------------
+# ==============================================================================
+# PATIENT DATA — MUST NEVER BE COMMITTED
+# ==============================================================================
+# This project derives from MIMIC-IV, which is credentialed-access data under a
+# PhysioNet Data Use Agreement that prohibits redistribution. Everything in this
+# block contains patient-level content (admission IDs, diagnoses, laboratory
+# values, medications, demographics, or clinical note text) and must stay local.
+#
+# Anyone with their own MIMIC-IV credentials can regenerate all of it by running
+# the pipeline in README "Reproducing the Results".
 data/raw/
 data/lakehouse/
 data/router/
+data/qa/
+data/ehrqa_synthetic.csv
+data/ehrqa_synthetic.parquet
+debug_output.txt
+debug_router.py
 
-# Retrieval artifacts
+# Retrieval artifacts built over clinical note text
 embeddings/
 data/faiss.index
 data/text_chunks.parquet
 data/text_chunk_meta.csv
 
-# Generated outputs
+# Evaluation outputs contain patient content (hadm_ids, questions, answers)
 experiments/results/
+experiments/logs/
 
-# Large model checkpoints
+# Model weights trained on patient data
 models/medgemma-4b-qlora/
 models/phi3-mini-qlora/
 models/**/*.safetensors
 models/router/feature_pipeline.pkl
+
+# Superseded experiment archives (large, patient-derived, historical only)
+models/_ARCHIVE_*/
+models/medgemma-4b-qlora_PRE_AUDIT_FIX/
 
 # Router generated artifacts
 models/router/router_predictions.csv
@@ -27,31 +44,37 @@ models/router/confusion_matrix.*
 models/router/feature_importance.*
 models/router/production_training.log
 
-# Environment
+# ==============================================================================
+# Standard exclusions
+# ==============================================================================
 .env
 .venv/
 venv/
 env/
 
-# Python
 __pycache__/
 *.py[cod]
 
-# Jupyter
 .ipynb_checkpoints/
 
-# IDE
 .vscode/
 .idea/
 
-# Build
 build/
 dist/
 *.egg-info/
 
-# OS
 .DS_Store
 Thumbs.db
 
-# Logs
 *.log
+
+# LaTeX build products
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.synctex.gz
+paper/*.fdb_latexmk
+paper/*.fls

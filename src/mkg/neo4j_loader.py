@@ -8,6 +8,7 @@ Builds four node types (Disease, Symptom, LabTest, Drug) and loads:
 Uses MERGE throughout so the script is idempotent -- safe to re-run.
 """
 
+import os
 import sys
 from pathlib import Path
 import pandas as pd
@@ -16,9 +17,10 @@ from neo4j import GraphDatabase
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from mkg.seed_diseases import SEED_DISEASES
 
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "medrag123"  # change if you used a different password
+# Read from the environment so no credential is committed. See README setup.
+NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "neo4j")
 
 ONTOLOGY_EDGES_PATH = Path("mkg/edges/ontology_edges.csv")
 COOCCURRENCE_EDGES_PATH = Path("mkg/edges/cooccurrence_edges.csv")

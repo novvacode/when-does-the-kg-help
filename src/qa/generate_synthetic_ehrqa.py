@@ -66,6 +66,123 @@ SPLIT_KEY_MAP = {
 
 PROGRESS_EVERY = 100
 
+# ══════════════════════════════════════════════════════════════════════════════
+# DISEASE-LEVEL SPLIT for KG-derived questions (2026-08-12 redesign)
+# ══════════════════════════════════════════════════════════════════════════════
+# The 2026-08-11 analysis showed the fine-tuned model had MEMORISED KG facts:
+# on contraindication questions, mode T (no EHR, no KG) scored 62.5% exactly
+# correct, because ~180 KG-derived QA pairs were in the fine-tuning split and
+# disease->drug facts are patient-independent — so the patient-level split in
+# splits/patient_splits.json gave no protection at all.
+#
+# Fix: split the SEED_DISEASES themselves. KG questions in the fine-tuning
+# split may only use FINETUNE_DISEASES; KG questions in router/eval splits may
+# only use HELDOUT_DISEASES. The model therefore learns the ANSWER FORMAT for
+# guideline questions (so it isn't penalised on ROUGE/BERTScore for phrasing)
+# while never seeing the specific facts it is later tested on. Any KG benefit
+# measured at evaluation time is then genuine retrieval, not recall.
+#
+# Deterministic split (sorted + seeded) so it is reproducible and auditable.
+#
+# Clinically-related diseases are split as a FAMILY, never individually.
+# Splitting CKD Stage 3/4 into fine-tune while leaving Stage 5 held-out would
+# leak: the stages share contraindications (Metformin, NSAIDs, Nitrofurantoin),
+# so a model trained on stage 3/4 could generalise the same facts to stage 5
+# and the "held-out" evaluation would be contaminated by near-duplicates.
+DISEASE_FAMILIES = [
+    # renal failure spectrum — shared contraindication profile
+    ["Chronic Kidney Disease Stage 3", "Chronic Kidney Disease Stage 4",
+     "Chronic Kidney Disease Stage 5", "Acute Kidney Injury"],
+    # thrombo-embolic / anticoagulation
+    ["Deep Vein Thrombosis", "Pulmonary Embolism", "Atrial Fibrillation"],
+    # hepatic
+    ["Cirrhosis of Liver", "Chronic Hepatitis C"],
+    # upper-GI acid disease
+    ["Gastroesophageal Reflux Disease", "Peptic Ulcer Disease"],
+    # cardiac / metabolic-vascular
+    ["Congestive Heart Failure", "Coronary Artery Disease", "Hyperlipidemia"],
+    # infection
+    ["Pneumonia", "Sepsis", "Urinary Tract Infection"],
+    # psychiatric
+    ["Major Depressive Disorder", "Bipolar Disorder"],
+]
+
+
+def _split_seed_diseases() -> tuple[set, set]:
+    """Deterministic (sorted + seeded) family-aware 50/50 split of the seed
+    diseases into a fine-tuning set and a held-out set."""
+    from src.mkg.seed_diseases import SEED_DISEASES
+    names = sorted(d["name"] for d in SEED_DISEASES)
+
+    # Build family groups; any disease not in an explicit family is its own.
+    grouped = {n for fam in DISEASE_FAMILIES for n in fam}
+    units: list[list[str]] = [sorted(f) for f in DISEASE_FAMILIES]
+    units += [[n] for n in names if n not in grouped]
+    units.sort(key=lambda u: (-len(u), u[0]))  # deterministic order
+
+    rng = random.Random(RANDOM_SEED)
+    rng.shuffle(units)
+
+    # Greedy balance by disease count so neither side is starved.
+    finetune: set = set()
+    heldout: set = set()
+    for unit in units:
+        if len(finetune) <= len(heldout):
+            finetune.update(unit)
+        else:
+            heldout.update(unit)
+
+    # Families must never straddle the split.
+    for fam in DISEASE_FAMILIES:
+        present = [d for d in fam if d in names]
+        if present:
+            in_ft = [d for d in present if d in finetune]
+            assert not in_ft or len(in_ft) == len(present), (
+                f"Disease family split across sets — leakage risk: {fam}")
+    return finetune, heldout
+
+
+FINETUNE_DISEASES, HELDOUT_DISEASES = _split_seed_diseases()
+
+
+def diseases_allowed_for(split_name: str) -> set:
+    """KG questions in the fine-tune split use a disjoint disease set from
+    those in router_train / router_val / eval."""
+    return FINETUNE_DISEASES if split_name == "finetune" else HELDOUT_DISEASES
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QUESTION MIX per split (2026-08-12 redesign)
+# ══════════════════════════════════════════════════════════════════════════════
+# The 2026-08-12 router audit found the learned router was beaten by a trivial
+# question_type -> mode lookup table (val acc 0.97 vs 0.87), because 6 of 7
+# question types were extractive templates whose gold answer is a verbatim EHR
+# field. That saturates T+E (composite exactly 1.0000 on three types), makes
+# 93% of T+E/T+E+K pairs quality-identical, and leaves the optimal mode a
+# function of question TYPE with no dependence on the PATIENT — so there was
+# no adaptive signal for any router to learn.
+#
+# The redesign adds PATIENT-DEPENDENT question types (see
+# make_monitoring_labs_qa / make_expected_symptoms_qa) whose optimal mode
+# genuinely varies across patients for the SAME question, and rebalances the
+# mix so those types are a large share of the router/eval splits.
+#
+# Fine-tuning keeps a majority of extractive types (it needs to learn to read
+# context and produce the answer format), but the router/eval splits are
+# weighted toward the patient-dependent types that actually exercise routing.
+EXTRACTIVE_TYPES = ["primary_diagnosis", "diagnoses", "lab", "medication",
+                    "summary", "next_step"]
+KG_DEPENDENT_TYPES = ["contraindication_check", "monitoring_labs",
+                      "expected_symptoms"]
+
+QUESTION_MIX = {
+    # split -> (n extractive per admission, n KG-dependent per admission)
+    "finetune":     (6, 2),
+    "router_train": (3, 4),
+    "router_val":   (3, 4),
+    "eval":         (3, 4),
+}
+
 TEMPLATES: Dict[str, List[str]] = {
     "primary_diagnosis": [
         "What is the primary diagnosis for this patient?",
@@ -411,28 +528,38 @@ def get_diagnosis_codes(
 # T+E+K's advantage (if any) reflects genuine use of KG facts, not context
 # containing the literal answer string.
 
-def load_mkg_facts() -> Tuple[Dict[str, List[Tuple[str, str]]], Dict[str, List[str]]]:
-    """Load CONTRAINDICATED_WITH and FIRST_LINE_TREATMENT edges from the
-    hand-curated ontology CSV (mkg/edges/ontology_edges.csv) — the same file
-    src/mkg/neo4j_loader.py loads into Neo4j, read directly here so QA
-    generation doesn't require a running Neo4j instance."""
+def load_mkg_facts() -> Dict[str, Dict[str, list]]:
+    """Load the hand-curated ontology edges (mkg/edges/ontology_edges.csv —
+    the same file src/mkg/neo4j_loader.py loads into Neo4j, read directly so
+    QA generation doesn't require a running Neo4j instance).
+
+    Returns {edge_type: {disease: [...]}} for the four edge types used to
+    build KG-dependent questions.
+    """
     path = Path("mkg/edges/ontology_edges.csv")
-    contraindicated: Dict[str, List[Tuple[str, str]]] = {}
-    first_line: Dict[str, List[str]] = {}
+    facts: Dict[str, Dict[str, list]] = {
+        "CONTRAINDICATED_WITH": {},
+        "FIRST_LINE_TREATMENT": {},
+        "INDICATES_LAB": {},
+        "HAS_SYMPTOM": {},
+    }
     if not path.exists():
-        print(f"[WARN] {path} not found — contraindication_check questions will be skipped.")
-        return contraindicated, first_line
+        print(f"[WARN] {path} not found — KG-dependent questions will be skipped.")
+        return facts
 
     df = pd.read_csv(path)
     for _, row in df.iterrows():
+        etype = str(row["edge_type"]).strip()
+        if etype not in facts:
+            continue
         disease = str(row["disease"]).strip()
-        drug = str(row["target"]).strip()
-        if row["edge_type"] == "CONTRAINDICATED_WITH":
+        target = str(row["target"]).strip()
+        if etype == "CONTRAINDICATED_WITH":
             note = str(row["notes"]).strip() if pd.notna(row.get("notes")) else ""
-            contraindicated.setdefault(disease, []).append((drug, note))
-        elif row["edge_type"] == "FIRST_LINE_TREATMENT":
-            first_line.setdefault(disease, []).append(drug)
-    return contraindicated, first_line
+            facts[etype].setdefault(disease, []).append((target, note))
+        else:
+            facts[etype].setdefault(disease, []).append(target)
+    return facts
 
 
 def match_seed_diseases(icd_pairs: List[Tuple[str, str]]) -> List[str]:
@@ -452,6 +579,115 @@ def match_seed_diseases(icd_pairs: List[Tuple[str, str]]) -> List[str]:
     return matched
 
 
+def make_monitoring_labs_qa(
+    hadm_id: int,
+    disease: str,
+    facts: Dict[str, Dict[str, list]],
+    patient_lab_names: List[str],
+    struct: Dict,
+) -> Optional[Dict]:
+    """PATIENT-DEPENDENT question type — the core of the 2026-08-12 redesign
+    and the direct operationalisation of H2.
+
+    Question: "Which laboratory tests should be monitored for this patient's
+    {disease}?"  Gold answer: the guideline-recommended labs for that disease
+    (KG INDICATES_LAB edges).
+
+    Why the optimal retrieval mode varies BY PATIENT for this same question:
+
+      * If the patient's EHR already contains those labs, the T+E snapshot
+        shows them and T+E can answer without any KG access.
+      * If the patient's EHR does NOT contain them (sparse EHR), the answer
+        exists only in the knowledge graph, so T+E+K is required.
+
+    Crucially the gold answer does NOT depend on which mode can reach it —
+    it is the clinically-expected monitoring panel either way. So this type
+    creates genuine per-patient variation in the best mode, which is exactly
+    the adaptive signal the previous template-only QA design lacked (see
+    RESEARCH_LOG.md, 2026-08-12 router audit).
+
+    `ehr_covers_answer` is recorded so H2 can be analysed directly rather
+    than inferred: it is the ground-truth indicator of whether the EHR alone
+    was sufficient for this patient.
+    """
+    labs = facts["INDICATES_LAB"].get(disease, [])
+    if not labs:
+        return None
+
+    patient_labs_lower = {l.lower() for l in patient_lab_names}
+    covered = [l for l in labs if any(l.lower() in pl or pl in l.lower()
+                                       for pl in patient_labs_lower)]
+    # Continuous coverage fraction is stored alongside the binary flag so H2
+    # can be analysed on a graded variable rather than a hard threshold.
+    coverage = len(covered) / len(labs) if labs else 0.0
+    # "EHR alone is sufficient" = the guideline panel is essentially all
+    # present in this patient's recorded labs. 0.8 rather than 1.0 so a
+    # single unusual assay (e.g. eGFR recorded as a derived value) does not
+    # flip an otherwise fully-covered patient to "needs KG".
+    ehr_covers = coverage >= 0.8
+
+    question = f"Which laboratory tests should be monitored for this patient's {disease}?"
+    answer = ", ".join(labs) + "."
+    return {
+        "hadm_id":            hadm_id,
+        "question_type":      "monitoring_labs",
+        "question":           question,
+        "answer":             answer,
+        "age":                None,
+        "gender":             None,
+        "diagnoses":          disease,
+        "labs":               "",
+        "medications":        "",
+        "source":             "synthetic_ehrqa_kg",
+        "kg_disease":         disease,
+        "ehr_covers_answer":  int(ehr_covers),
+        "ehr_lab_coverage":   round(coverage, 3),
+        "n_labs":             struct["n_labs"],
+        "n_diag":             struct["n_diag"],
+        "n_meds":             struct["n_meds"],
+        "sparsity_score":     struct["sparsity_score"],
+        "sparsity_bucket":    struct["sparsity_bucket"],
+    }
+
+
+def make_expected_symptoms_qa(
+    hadm_id: int,
+    disease: str,
+    facts: Dict[str, Dict[str, list]],
+    struct: Dict,
+) -> Optional[Dict]:
+    """Second patient-dependent KG type. Same logic as monitoring_labs: the
+    expected symptom set for a disease is guideline knowledge, but for a
+    patient whose notes already describe those symptoms, text retrieval (T)
+    or the EHR snapshot may suffice, whereas for a patient with thin
+    documentation only the KG supplies them."""
+    symptoms = facts["HAS_SYMPTOM"].get(disease, [])
+    if not symptoms:
+        return None
+    question = f"What symptoms are typically associated with this patient's {disease}?"
+    answer = ", ".join(symptoms) + "."
+    return {
+        "hadm_id":           hadm_id,
+        "question_type":     "expected_symptoms",
+        "question":          question,
+        "answer":            answer,
+        "age":               None,
+        "gender":            None,
+        "diagnoses":         disease,
+        "labs":              "",
+        "medications":       "",
+        "source":            "synthetic_ehrqa_kg",
+        "kg_disease":        disease,
+        "ehr_covers_answer": 0,
+        "ehr_lab_coverage":  0.0,
+        "n_labs":            struct["n_labs"],
+        "n_diag":            struct["n_diag"],
+        "n_meds":            struct["n_meds"],
+        "sparsity_score":    struct["sparsity_score"],
+        "sparsity_bucket":   struct["sparsity_bucket"],
+    }
+
+
 def make_contraindication_qa(
     hadm_id: int,
     disease: str,
@@ -459,6 +695,7 @@ def make_contraindication_qa(
     first_line: Dict[str, List[str]],
     n_labs: int, n_diag: int, n_meds: int,
     sparsity_score: Optional[float], sparsity_bucket: str,
+    kg_disease: Optional[str] = None,
 ) -> Optional[Dict]:
     """Build one contraindication-check QA pair for a matched seed disease.
     Roughly half the time asks about a genuinely contraindicated drug
@@ -491,12 +728,49 @@ def make_contraindication_qa(
         "labs":            "",
         "medications":     "",
         "source":          "synthetic_ehrqa_kg",
+        "kg_disease":        kg_disease or disease,
+        "ehr_covers_answer": 0,
+        "ehr_lab_coverage":  0.0,
         "n_labs":          n_labs,
         "n_diag":          n_diag,
         "n_meds":          n_meds,
         "sparsity_score":  sparsity_score,
         "sparsity_bucket": sparsity_bucket,
     }
+
+
+def get_all_lab_names(
+    con: duckdb.DuckDBPyConnection,
+    schema: Dict[str, Dict[str, Optional[str]]],
+    hadm_id: int,
+) -> List[str]:
+    """Every DISTINCT lab name recorded for the admission.
+
+    Needed by make_monitoring_labs_qa to decide whether the EHR already
+    covers the guideline panel. An earlier version reused
+    get_abnormal_labs(limit=3), which returns only the top three ABNORMAL
+    labs — against a mean of ~30 distinct labs per admission — so
+    `ehr_covers_answer` came out 0 for 100% of rows and the question type
+    produced no patient-dependent routing variation at all. See
+    RESEARCH_LOG.md, 2026-08-12 regeneration check.
+    """
+    l = schema["labs"]
+    li = schema["d_labitems"]
+    if not l["hadm_id"] or not l["itemid"]:
+        return []
+    has_lkp = li["itemid"] and li["label"]
+    label_expr = (f"COALESCE(li.{li['label']}, CAST(l.{l['itemid']} AS VARCHAR))"
+                  if has_lkp else f"CAST(l.{l['itemid']} AS VARCHAR)")
+    join_clause = (f"LEFT JOIN d_labitems li ON l.{l['itemid']} = li.{li['itemid']}"
+                   if has_lkp else "")
+    rows = con.execute(f"""
+        SELECT DISTINCT {label_expr} AS label
+        FROM labs l
+        {join_clause}
+        WHERE l.{l['hadm_id']} = ?
+          AND {label_expr} IS NOT NULL
+    """, [hadm_id]).fetchall()
+    return [str(r[0]).strip() for r in rows if r[0] and str(r[0]).strip()]
 
 
 def get_abnormal_labs(
@@ -721,9 +995,21 @@ def generate_for_split(
     records: List[Dict] = []
     seen_keys: set = set()
     scanned = 0
-    modes = list(TEMPLATES.keys())
-    contraindicated_edges, first_line_edges = load_mkg_facts()
-    max_kg_qa_per_admission = 2
+    facts = load_mkg_facts()
+    contraindicated_edges = facts["CONTRAINDICATED_WITH"]
+    first_line_edges = facts["FIRST_LINE_TREATMENT"]
+
+    # Disease-level split: KG questions in the fine-tune split draw from a
+    # disjoint disease set to the router/eval splits, so the model cannot
+    # memorise the specific facts it is later evaluated on. See
+    # diseases_allowed_for() and RESEARCH_LOG.md 2026-08-12.
+    allowed_diseases = diseases_allowed_for(split_name)
+    n_extractive, n_kg = QUESTION_MIX.get(split_name, (6, 2))
+    modes = EXTRACTIVE_TYPES[:]
+    print(f"[INFO] question mix for '{split_name}': "
+          f"{n_extractive} extractive + up to {n_kg} KG-dependent per admission")
+    print(f"[INFO] KG questions restricted to {len(allowed_diseases)} diseases "
+          f"({'FINETUNE' if split_name == 'finetune' else 'HELD-OUT'} disease set)")
     t0 = time.time()
 
     for subject_id, hadm_id in admissions:
@@ -742,7 +1028,28 @@ def generate_for_split(
             snapshot_api, hadm_id, diagnoses, labs, medications
         )
 
-        for mode in modes:
+        def _add(rec) -> bool:
+            """Append a QA record if new; return True when the split target
+            has been reached."""
+            if rec is None:
+                return len(records) >= target
+            key = (hadm_id, rec["question"], rec["answer"])
+            if key in seen_keys:
+                return len(records) >= target
+            seen_keys.add(key)
+            # Every record must carry the same columns, otherwise the parquet
+            # schema differs between extractive and KG rows.
+            rec.setdefault("kg_disease", "")
+            rec.setdefault("ehr_covers_answer", 0)
+            rec.setdefault("ehr_lab_coverage", 0.0)
+            records.append(rec)
+            if len(records) % PROGRESS_EVERY == 0:
+                print(f"[INFO] {split_name}: {len(records)}/{target} QA pairs | "
+                      f"admissions scanned: {scanned} | {time.time()-t0:.1f}s")
+            return len(records) >= target
+
+        # ── extractive template questions ────────────────────────────────
+        for mode in modes[:n_extractive]:
             rec = make_qa(
                 hadm_id, mode, diagnoses, labs, medications, age, gender,
                 n_labs=struct_features["n_labs"],
@@ -751,46 +1058,44 @@ def generate_for_split(
                 sparsity_score=struct_features["sparsity_score"],
                 sparsity_bucket=struct_features["sparsity_bucket"],
             )
-            key  = (hadm_id, rec["question"], rec["answer"])
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            records.append(rec)
-
-            if len(records) % PROGRESS_EVERY == 0:
-                elapsed = time.time() - t0
-                print(f"[INFO] {split_name}: {len(records)}/{target} QA pairs | "
-                      f"admissions scanned: {scanned} | {elapsed:.1f}s")
-
-            if len(records) >= target:
+            if _add(rec):
                 break
 
-        # KG-grounded contraindication_check questions (see load_mkg_facts /
-        # make_contraindication_qa docstrings) — only generated for
-        # admissions whose diagnoses match a seed disease with ontology
-        # coverage, so this is a bonus type layered on top of, not a
-        # replacement for, the template types above.
-        if len(records) < target and (contraindicated_edges or first_line_edges):
+        # ── KG-dependent questions (disease-split enforced) ───────────────
+        if len(records) < target:
             icd_pairs = get_diagnosis_codes(con, schema, hadm_id)
-            matched_diseases = match_seed_diseases(icd_pairs)
-            for disease in matched_diseases[:max_kg_qa_per_admission]:
-                rec = make_contraindication_qa(
-                    hadm_id, disease, contraindicated_edges, first_line_edges,
-                    n_labs=struct_features["n_labs"],
-                    n_diag=struct_features["n_diag"],
-                    n_meds=struct_features["n_meds"],
-                    sparsity_score=struct_features["sparsity_score"],
-                    sparsity_bucket=struct_features["sparsity_bucket"],
-                )
-                if rec is None:
-                    continue
-                key = (hadm_id, rec["question"], rec["answer"])
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                records.append(rec)
-                if len(records) >= target:
+            matched = [d for d in match_seed_diseases(icd_pairs) if d in allowed_diseases]
+            patient_lab_names = get_all_lab_names(con, schema, hadm_id)
+
+            kg_added = 0
+            for disease in matched:
+                if kg_added >= n_kg or len(records) >= target:
                     break
+                # monitoring_labs and expected_symptoms are the patient-
+                # dependent types that create real routing variation;
+                # contraindication_check is the guideline-reasoning type.
+                for builder in (
+                    lambda d: make_monitoring_labs_qa(
+                        hadm_id, d, facts, patient_lab_names, struct_features),
+                    lambda d: make_contraindication_qa(
+                        hadm_id, d, contraindicated_edges, first_line_edges,
+                        n_labs=struct_features["n_labs"],
+                        n_diag=struct_features["n_diag"],
+                        n_meds=struct_features["n_meds"],
+                        sparsity_score=struct_features["sparsity_score"],
+                        sparsity_bucket=struct_features["sparsity_bucket"],
+                        kg_disease=d),
+                    lambda d: make_expected_symptoms_qa(
+                        hadm_id, d, facts, struct_features),
+                ):
+                    if kg_added >= n_kg or len(records) >= target:
+                        break
+                    rec = builder(disease)
+                    if rec is not None:
+                        before = len(records)
+                        _add(rec)
+                        if len(records) > before:
+                            kg_added += 1
 
         if len(records) >= target:
             break

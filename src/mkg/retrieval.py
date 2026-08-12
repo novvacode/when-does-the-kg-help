@@ -6,11 +6,18 @@ retrieve the 1-hop neighborhood from Neo4j and convert it into natural
 language statements suitable for LLM prompt injection.
 """
 
+import os
+import re
+
 from neo4j import GraphDatabase
 
-NEO4J_URI = "bolt://localhost:7687"
-NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "medrag123"
+# Connection settings are read from the environment so that no credential is
+# committed to source control. Set NEO4J_PASSWORD before running any MKG step:
+#   PowerShell:  $env:NEO4J_PASSWORD = "your-password"
+#   bash:        export NEO4J_PASSWORD="your-password"
+NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "neo4j")
 
 # Generic words that appear across many disease names -- must not be used
 # alone as a matching signal (this caused the false-positive bug).
@@ -18,6 +25,23 @@ STOPWORDS = {
     "chronic", "disease", "acute", "unspecified", "stage", "with", "without",
     "mention", "other", "and", "the", "of", "in", "type", "disorder"
 }
+
+
+def _significant_terms(text: str) -> set:
+    """Lowercase content tokens, punctuation stripped.
+
+    BUG FIX (2026-08-13): term extraction previously used
+    `text.lower().replace(",", " ").split()`, which left every other
+    punctuation mark attached to the token. A question ending
+    "...this patient's Essential Hypertension?" therefore yielded the token
+    "hypertension?" — which does not equal "hypertension" — so the overlap
+    score against the node "Essential Hypertension" was 1/2 = 0.5, under the
+    0.6 acceptance bar, and the disease silently failed to match. Trailing
+    '?', '.', ')' and possessive apostrophes all caused this class of miss.
+    Regex tokenisation removes the whole class.
+    """
+    return {t for t in re.findall(r"[a-z0-9]+", text.lower())
+            if t not in STOPWORDS and len(t) > 2}
 
 
 def get_driver():
@@ -36,12 +60,12 @@ def find_matching_diseases(session, diagnosis_texts: list) -> list:
 
     matched = []
     for dx_text in diagnosis_texts:
-        dx_terms = set(t for t in dx_text.lower().replace(",", " ").split() if t not in STOPWORDS and len(t) > 2)
+        dx_terms = _significant_terms(dx_text)
 
         best_match = None
         best_score = 0
         for disease_name in disease_names:
-            disease_terms = set(t for t in disease_name.lower().split() if t not in STOPWORDS and len(t) > 2)
+            disease_terms = _significant_terms(disease_name)
             if not disease_terms:
                 continue
             overlap = dx_terms & disease_terms

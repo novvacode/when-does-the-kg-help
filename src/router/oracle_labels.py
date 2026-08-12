@@ -38,6 +38,7 @@ from transformers import (
 )
 
 from src.model.prompts import build_user_message
+from src.model.context_budget import MAX_NEW_TOKENS as SHARED_MAX_NEW_TOKENS
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -58,7 +59,10 @@ class OracleConfig:
     modes: list = field(default_factory=lambda: ["T", "T+E", "T+E+K"])
 
     # ── Generation settings ──
-    max_new_tokens:       int   = 128
+    # Imported shared constant — must match run_evaluation.py's generation
+    # budget so oracle mode-selection and final reported answers are
+    # generated under identical conditions (RESEARCH_LOG.md, 2026-08-10).
+    max_new_tokens:       int   = SHARED_MAX_NEW_TOKENS
     do_sample:            bool  = False
     use_cache:            bool  = True  
     
@@ -265,6 +269,46 @@ class MetricEvaluator:
 # Module 4 — Hallucination Detector
 # ══════════════════════════════════════════════════════════════════════════════
 
+def is_context_echo(answer: str, prompt_context: str) -> bool:
+    """Detect the 2026-08-08 failure mode: the model regurgitating its own
+    retrieved context instead of answering.
+
+    IMPORTANT — why this is not just a substring check. The obvious test
+    (`answer[:60] in prompt_context`) is WRONG for extractive clinical QA:
+    a correct answer to "what was the main diagnosis?" is, by definition,
+    a span that appears in the context. The 2026-08-09 post-training check
+    initially reported a 13.3% "echo rate" that was entirely false
+    positives — e.g. gold "Mitral valve disorders" / predicted "Mitral
+    valve disorders" was flagged as an echo despite being exactly right.
+
+    A genuine echo has two distinguishing properties, both required here:
+      1. It is LONG — the pathological outputs ran to the full
+         max_new_tokens budget, whereas real answers are short (gold
+         answers measure mean 24 / max 68 tokens).
+      2. It reproduces the context's STRUCTURE or its OPENING — the broken
+         model's outputs literally began "## Retrieved Clinical Passages\n
+         [Passage 1 | DS]...", i.e. copying from the top of the prompt,
+         rather than extracting a span from the middle.
+    """
+    a = (answer or "").strip()
+    ctx = (prompt_context or "").strip()
+    if not a or not ctx:
+        return False
+
+    # Property 2a: verbatim reproduction of the context's section scaffolding.
+    # This alone is conclusive regardless of length.
+    if a.startswith("## ") or "[Passage " in a[:200]:
+        return True
+
+    # Property 1: short answers are answers, not context dumps.
+    if len(a) < 150:
+        return False
+
+    # Property 2b: a long answer that begins where the context begins is
+    # copying from the top rather than extracting an answer span.
+    return a[:60] in ctx[:300]
+
+
 class HallucinationDetector:
     _ABNORMAL_SIGNALS = ["abnormal", "high", "low", "elevated", "reduced", "critical", "flag", "h]", "l]"]
     _NORMAL_CLAIMS    = ["no abnormal", "labs are normal", "all labs normal", "within normal"]
@@ -297,13 +341,67 @@ class HallucinationDetector:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class OracleSelector:
+    """Picks the oracle label = the cheapest mode that achieves (within
+    TIE_EPSILON) the best composite score.
+
+    Tie handling is EXPLICIT and documented, because it materially shapes the
+    label distribution. Previously this used `max(adjusted_scores,
+    key=adjusted_scores.get)`, which on ties silently returns whichever key
+    Python happens to iterate first — always "T", since the dict is built in
+    cfg.modes order. In the 2026-08-09 oracle run that accident drove the
+    labels: 102/114 (train) and 55/65 (val) of T's "wins" were EXACT ties
+    with T+E, not genuine quality advantages (RESEARCH_LOG.md).
+
+    Preferring the cheapest mode on a genuine tie is the scientifically
+    correct behaviour for this project — H1 is explicitly about avoiding
+    unnecessary retrieval cost, so if extra context adds no measurable
+    quality it SHOULD route cheap. The difference from before is that this is
+    now an intentional, stated policy rather than an artifact of dict
+    ordering, and TIE_EPSILON makes "no measurable difference" explicit
+    instead of requiring exact float equality.
+
+    NOTE: this does not manufacture T+E+K labels and must not be used to.
+    If T+E+K genuinely scores higher, it wins outright regardless of cost.
+    """
+
+    # Composite scores are rounded to 4 dp upstream; treat differences at or
+    # below this as noise rather than signal.
+    TIE_EPSILON = 1e-4
+
+    # Ascending retrieval cost. Also defines the deterministic preference
+    # order applied within a tie band.
+    MODE_COST_ORDER = ["T", "T+E", "T+E+K"]
+
     def __init__(self, cfg: OracleConfig):
         self.cfg = cfg
         self.mode_costs = {"T": 0.000, "T+E": 0.001, "T+E+K": 0.002}
 
     def select(self, composite_scores: dict[str, float]) -> str:
-        adjusted_scores = {mode: score - self.mode_costs.get(mode, 0) for mode, score in composite_scores.items()}
-        return max(adjusted_scores, key=adjusted_scores.get)
+        # Cost adjustment is applied for ranking, as before.
+        adjusted = {m: s - self.mode_costs.get(m, 0.0) for m, s in composite_scores.items()}
+        best_value = max(adjusted.values())
+        tied = [m for m, v in adjusted.items() if best_value - v <= self.TIE_EPSILON]
+        for mode in self.MODE_COST_ORDER:
+            if mode in tied:
+                return mode
+        return max(adjusted, key=adjusted.get)
+
+    def selection_is_tie(self, composite_scores: dict[str, float]) -> bool:
+        """True when >1 mode achieves the best RAW quality — i.e. the label
+        was decided by the cost tie-break, not by a quality difference.
+
+        Measured on RAW composites, deliberately NOT on cost-adjusted ones.
+        An earlier version compared adjusted scores, which made this metric
+        useless: two modes producing byte-identical answers differ by exactly
+        the cost delta (e.g. 0.001) after adjustment, which exceeds
+        TIE_EPSILON, so they were counted as a genuine quality difference.
+        That version reported `tie_decided_label_rate: 0.0` on the
+        2026-08-11 val run even though 96/100 T+E vs T+E+K pairs were in fact
+        quality-identical. See RESEARCH_LOG.md, 2026-08-11 analysis.
+        """
+        best_raw = max(composite_scores.values())
+        return sum(1 for v in composite_scores.values()
+                   if best_raw - v <= self.TIE_EPSILON) > 1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -366,6 +464,21 @@ class ReportGenerator:
             # These per-mode rates make that hypothesis checkable rather than
             # assumed — compare halluc_rate and mean prompt length across
             # modes after each oracle generation run.
+            # Fraction of labels decided by the cost tie-break rather than a
+            # real quality difference. In the 2026-08-09 run this was ~89%
+            # (train) — the single most important number for judging whether
+            # oracle labels are meaningful. If this is high again, the labels
+            # are an artifact and the router must NOT be trained on them.
+            "tie_decided_label_rate": (
+                round(df["label_was_tie"].mean(), 4) if "label_was_tie" in df.columns else None
+            ),
+            # Fraction of generations that echo their own prompt context —
+            # the 2026-08-08 failure mode. Should be near 0 on a healthy model.
+            "context_echo_rate_per_mode": {
+                mode: round(df[f"echo_{mode.replace('+','').lower()}"].mean(), 4)
+                for mode in cfg.modes
+                if f"echo_{mode.replace('+','').lower()}" in df.columns
+            },
             "hallucination_diagnostic_per_mode": {
                 mode: {
                     "halluc_rate": round(df[f"halluc_{mode.replace('+','').lower()}"].mean(), 4),
@@ -493,6 +606,12 @@ def process_split(split_name: str, input_path: str, output_path: str, cfg: Oracl
                                     for mode, sc in zip(cfg.modes, raw_scores)}
                 
                 best_mode = components["selector"].select(composite_scores)
+                is_tie = components["selector"].selection_is_tie(composite_scores)
+
+                echo_flags = {
+                    m: int(is_context_echo(mode_answers[m], prompts_used[m]))
+                    for m in cfg.modes
+                }
 
                 row_dict = {
                     "question_key": qkey,
@@ -500,6 +619,7 @@ def process_split(split_name: str, input_path: str, output_path: str, cfg: Oracl
                     "question": question,
                     "reference_answer": ref,
                     "best_mode": best_mode,
+                    "label_was_tie": int(is_tie),
                     "skipped": False,
                     "n_labs": n_labs,
                     "n_diag": n_diag,
@@ -514,7 +634,8 @@ def process_split(split_name: str, input_path: str, output_path: str, cfg: Oracl
                         f"prompt_{mk}": prompts_used[mode],
                         f"answer_{mk}": mode_answers[mode], f"composite_{mk}": composite_scores[mode],
                         f"bert_{mk}": raw_scores[j]["bert_f1"], f"rouge_{mk}": raw_scores[j]["rouge_l"], f"em_{mk}": raw_scores[j]["em"],
-                        f"halluc_{mk}": halluc_flags[mode], f"latency_{mk}": mode_latencies[mode]
+                        f"halluc_{mk}": halluc_flags[mode], f"latency_{mk}": mode_latencies[mode],
+                        f"echo_{mk}": echo_flags[mode],
                     })
                 results.append(row_dict)
 

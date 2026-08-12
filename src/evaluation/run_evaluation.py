@@ -3,12 +3,18 @@ src/evaluation/run_evaluation.py
 =================================
 Phase 6 — Final Held-Out Evaluation.
 
-Evaluates all four systems on ehrqa_eval.parquet (NEVER touched before):
-    1. T          — Text-only RAG
-    2. T+E        — Text + EHR
-    3. T+E+K      — Always-on hybrid (KG every time)
-    4. Router     — Adaptive routing (our proposed system)
-    5. Random     — Random mode selection (lower bound baseline)
+Evaluates all seven systems on ehrqa_eval.parquet (NEVER touched before):
+    1. T           — Text-only RAG
+    2. T+E         — Text + EHR   (this IS the "always-T+E" baseline)
+    3. T+E+K       — Always-on hybrid (KG every time)
+    4. Router      — Adaptive routing (our proposed system)
+    5. Random      — Random mode selection (lower bound baseline)
+    6. StaticQType — question_type -> majority-mode lookup, fit on
+                     router_train oracle labels. Required comparator: the
+                     2026-08-12 audit found this trivial policy beat the
+                     learned router on router_val (acc 0.97 vs 0.87).
+    7. Oracle      — per-question best achievable mode (upper bound),
+                     derived post-hoc from the same generations.
 
 Metrics computed:
     Text Quality : BLEU, ROUGE-L, BERTScore F1
@@ -34,7 +40,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import gc
 import logging
+import os
 import pickle
 import random
 import time
@@ -62,12 +70,20 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from src.router.feature_pipeline import HybridFeaturePipeline, RouterConfig  # noqa: F401
 from src.lakehouse.patient_snapshot import PatientSnapshot
 from src.model.prompts import build_user_message
+from src.model.context_budget import (
+    build_budgeted_context, MAX_SEQ_LENGTH, MAX_NEW_TOKENS,
+)
 
 warnings.filterwarnings("ignore")
 
 
 # -- Paths --------------------------------------------------------------------
-EVAL_QA_FILE   = Path("data/lakehouse/qa/ehrqa_eval.parquet")
+# data/qa/ is canonical (written by src/qa/generate_synthetic_ehrqa.py).
+# Was previously data/lakehouse/qa/ — a stale, pre-2026-08-06-audit snapshot
+# with different hadm_ids and zero contraindication_check examples; using it
+# here would have silently evaluated on the wrong held-out set. See
+# RESEARCH_LOG.md, 2026-08-09 entry.
+EVAL_QA_FILE   = Path("data/qa/ehrqa_eval.parquet")
 ROUTER_DIR     = Path("data/router")
 ROUTER_MODEL   = Path("models/router/router_xgb_model.json")
 LABEL_ENC      = Path("models/router/label_encoder.pkl")
@@ -85,9 +101,58 @@ MIN_FINAL_EVAL_SAMPLES = 50
 
 
 MODES           = ["T", "T+E", "T+E+K"]
-SYSTEMS         = ["T", "T+E", "T+E+K", "Router", "Random"]
+
+# Systems compared in Table 2.
+#
+# NOTE on the "Always-T+E" baseline: it is already present — the "T+E" system
+# below IS the always-T+E policy (every question forced to T+E mode). No
+# separate row is added, since a duplicate would double compute for identical
+# numbers. Flagged explicitly because it is a requested baseline.
+#
+# StaticQType and Oracle were added 2026-08-12 after the router audit found a
+# trivial question_type -> mode lookup beat the learned router on val accuracy
+# (0.97 vs 0.87). Reporting the router without these would not be defensible.
+#   StaticQType : question_type -> majority-best-mode lookup, fit ONLY on
+#                 router_train oracle labels (never on held-out eval).
+#   Oracle      : per-question best achievable mode — the upper bound any
+#                 router could reach. Computed post-hoc from the same
+#                 generations, so it trains nothing and leaks nothing.
+SYSTEMS         = ["T", "T+E", "T+E+K", "Router", "Random", "StaticQType", "Oracle"]
+
+# Systems whose answers are selected post-hoc rather than generated in the
+# main loop (Oracle picks among already-generated per-mode answers).
+POSTHOC_SYSTEMS = ["Oracle"]
+
+ROUTER_TRAIN_ORACLE = Path("data/router/router_train_oracle.parquet")
+
+# Crash-recovery checkpoint (see run_evaluation()). Deleted on successful
+# completion so a later clean run is never silently resumed from a stale one.
+CHECKPOINT_FILE  = OUT_DIR / "_eval_checkpoint.parquet"
+# Lowered 10 -> 5 after the 2026-08-14 crashes: a CUDA fault forces a full
+# process restart, so the flush interval directly bounds lost work.
+CHECKPOINT_EVERY = 5
+
+
+class UnrecoverableCudaError(RuntimeError):
+    """Raised when the CUDA context is poisoned (illegal memory access).
+
+    Distinct from ordinary RuntimeErrors because it is NOT retryable in
+    process — see the comment in generate(). The main loop catches it,
+    flushes the checkpoint, and exits so the run can be resumed by simply
+    re-running the command.
+    """
+
+
+def _is_unrecoverable_cuda_error(e: Exception) -> bool:
+    msg = str(e).lower()
+    return ("illegal memory access" in msg
+            or "cuda error" in msg
+            or "device-side assert" in msg
+            or "cuda kernel errors" in msg)
 SEED            = 42
-MAX_NEW_TOKENS  = 256
+# MAX_NEW_TOKENS is imported from context_budget so oracle-label generation
+# and final evaluation share one generation budget (was 256 here vs. 128 in
+# oracle_labels.py — see RESEARCH_LOG.md, 2026-08-10 audit).
 BERTSCORE_MODEL = "distilbert-base-uncased"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s",
@@ -205,6 +270,49 @@ def get_retrieval_context(question: str, hadm_id: int, mode: str) -> dict:
         }
 
 
+# -- Static question-type policy baseline ----------------------------------------
+
+
+def load_static_qtype_policy() -> tuple[dict, str]:
+    """Fit the `question_type -> majority best_mode` lookup on router_train
+    oracle labels ONLY.
+
+    This is the baseline that beat the learned router on router_val
+    (accuracy 0.97 vs 0.87) in the 2026-08-12 audit. Fitting it on
+    router_train (never on the held-out eval set) keeps it a legitimate
+    comparator rather than an oracle in disguise.
+
+    Returns (mapping, fallback_mode).
+    """
+    if not ROUTER_TRAIN_ORACLE.exists():
+        logger.warning(
+            f"{ROUTER_TRAIN_ORACLE} not found — StaticQType baseline will fall "
+            "back to T+E for every question."
+        )
+        return {}, "T+E"
+
+    df = pd.read_parquet(ROUTER_TRAIN_ORACLE)
+    df = df[~df["best_mode"].isin(["FAILED", "FAILED_GENERATION", "MISSING_MODES"])]
+
+    qa_path = Path("data/qa/ehrqa_router_train.parquet")
+    if not qa_path.exists():
+        return {}, "T+E"
+    qa = pd.read_parquet(qa_path)[["hadm_id", "question", "question_type"]]
+    qa = qa.drop_duplicates(subset=["hadm_id", "question"])
+    df = df.merge(qa, on=["hadm_id", "question"], how="left")
+
+    mapping = (
+        df.dropna(subset=["question_type"])
+          .groupby("question_type")["best_mode"]
+          .agg(lambda s: s.value_counts().index[0])
+          .to_dict()
+    )
+    fallback = df["best_mode"].value_counts().index[0] if len(df) else "T+E"
+    print(f"[INFO] StaticQType policy fit on router_train: {mapping} "
+          f"(fallback={fallback})")
+    return mapping, fallback
+
+
 # -- Router prediction -----------------------------------------------------------
 
 
@@ -275,6 +383,12 @@ def router_predict(
 @torch.inference_mode()
 def generate(model, tok, question: str, context: str) -> tuple[str, float]:
     """Generate answer. Returns (answer_str, latency_ms)."""
+    # Budget the context exactly as training and router-dataset construction
+    # do. Previously this path tokenized with truncation=True/max_length=2048,
+    # which silently cut the tail off 68% of contexts — and since the question
+    # is appended AFTER the context, that removed the question itself at
+    # inference. See RESEARCH_LOG.md, 2026-08-10 pre-training audit.
+    context = build_budgeted_context(context, tok)
     messages = [{"role": "user", "content": build_user_message(context, question)}]
 
     try:
@@ -284,23 +398,41 @@ def generate(model, tok, question: str, context: str) -> tuple[str, float]:
     except Exception:
         prompt = f"<start_of_turn>user\n{user_msg}<end_of_turn>\n<start_of_turn>model\n"
 
-    inputs = tok(prompt, return_tensors="pt", truncation=True, max_length=2048).to(model.device)
+    # Context is already budgeted above, so this limit should never bind;
+    # it stays only as a defensive backstop and is the SAME constant used by
+    # training (previously 2048 here vs. 768 in training vs. unbounded in
+    # oracle generation).
+    inputs = tok(prompt, return_tensors="pt", truncation=True,
+                 max_length=MAX_SEQ_LENGTH).to(model.device)
 
-    t0 = time.time()
-    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-        out = model.generate(
-            **inputs,
-            max_new_tokens=MAX_NEW_TOKENS,
-            do_sample=False,
-            temperature=0.1,
-            pad_token_id=tok.pad_token_id,
-            eos_token_id=tok.eos_token_id,
-        )
-    latency_ms = (time.time() - t0) * 1000
-
-    new_ids = out[0][inputs["input_ids"].shape[1]:]
-    answer = tok.decode(new_ids, skip_special_tokens=True).strip()
-    return answer, latency_ms
+    try:
+        t0 = time.time()
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            out = model.generate(
+                **inputs,
+                max_new_tokens=MAX_NEW_TOKENS,
+                do_sample=False,
+                temperature=0.1,
+                pad_token_id=tok.pad_token_id,
+                eos_token_id=tok.eos_token_id,
+            )
+        latency_ms = (time.time() - t0) * 1000
+        new_ids = out[0][inputs["input_ids"].shape[1]:]
+        return tok.decode(new_ids, skip_special_tokens=True).strip(), latency_ms
+    except RuntimeError as e:
+        if not _is_unrecoverable_cuda_error(e):
+            raise
+        # An "illegal memory access" POISONS THE CUDA CONTEXT for the whole
+        # process — it is not a transient, retryable condition. A previous
+        # version of this function retried after empty_cache(); the
+        # 2026-08-14 log shows why that cannot work: after the first fault
+        # the retry failed identically, then FAISS query-embedding failed for
+        # all three modes, and finally even `.to(model.device)` on a
+        # tokenizer output raised. Every subsequent CUDA op is dead.
+        # The only recovery is a fresh process, so raise a dedicated
+        # exception that the main loop converts into "flush checkpoint and
+        # exit cleanly", letting the user resume by re-running the command.
+        raise UnrecoverableCudaError(str(e)) from e
 
 
 # -- Metrics ------------------------------------------------------------------
@@ -463,10 +595,45 @@ def run_evaluation(
         print(f"[WARN] Router not available: {e}. Router system will use T fallback.")
         router_clf = router_le = feat_pipeline = None
 
+    static_policy, static_fallback = load_static_qtype_policy()
+
+    # ── Crash recovery ────────────────────────────────────────────────────
+    # The 2026-08-14 run lost ~6 completed questions (and would have lost all
+    # 300) to a single CUDA fault, because this script only wrote results at
+    # the very end — unlike oracle_labels.py, which has had a CheckpointManager
+    # throughout. On a ~2.5h job over crash-prone hardware that is an
+    # unacceptable failure mode. Completed questions are now flushed to a
+    # checkpoint parquet every CHECKPOINT_EVERY questions and skipped on
+    # restart, so re-running after a crash resumes instead of restarting.
     records: list[dict] = []
+    done_q_idx: set = set()
+    if CHECKPOINT_FILE.exists():
+        try:
+            _ck = pd.read_parquet(CHECKPOINT_FILE)
+            records = _ck.to_dict(orient="records")
+            done_q_idx = set(_ck["q_idx"].unique())
+            print(f"[INFO] Resuming from checkpoint: {len(done_q_idx)} questions "
+                  f"already complete ({len(records)} rows). "
+                  f"Delete {CHECKPOINT_FILE} to force a clean run.")
+        except Exception as e:
+            logger.warning(f"Could not read checkpoint {CHECKPOINT_FILE}: {e}. Starting fresh.")
+            records, done_q_idx = [], set()
+
+    def _save_checkpoint():
+        if not records:
+            return
+        CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CHECKPOINT_FILE.with_suffix(".tmp.parquet")
+        # write-then-rename so a crash mid-write cannot corrupt the checkpoint
+        pd.DataFrame(records).to_parquet(tmp, index=False)
+        os.replace(tmp, CHECKPOINT_FILE)
+
     t_start = time.time()
 
-    for q_idx, row in df_eval.iterrows():
+    try:
+      for q_idx, row in df_eval.iterrows():
+        if q_idx in done_q_idx:
+            continue
         question = str(row["question"])
         reference = str(row["answer"])
         hadm_id = int(row["hadm_id"])
@@ -499,14 +666,21 @@ def run_evaluation(
             system_answers[mode] = ans
             system_latency[mode] = ctx[mode]["latency_ms"] + gen_lat
 
+        static_mode = static_policy.get(q_type, static_fallback)
+
         system_answers["Router"] = system_answers[router_mode]
         system_latency["Router"] = system_latency[router_mode]
         system_answers["Random"] = system_answers[random_mode]
         system_latency["Random"] = system_latency[random_mode]
+        system_answers["StaticQType"] = system_answers[static_mode]
+        system_latency["StaticQType"] = system_latency[static_mode]
 
         for system in SYSTEMS:
+            if system in POSTHOC_SYSTEMS:
+                continue  # Oracle rows are derived after metrics are computed
             mode_used = (router_mode if system == "Router"
                          else random_mode if system == "Random"
+                         else static_mode if system == "StaticQType"
                          else system)
 
             rec = {
@@ -542,11 +716,32 @@ def run_evaluation(
             rec["rouge_l"] = compute_rouge_l(system_answers[system], reference)
             records.append(rec)
 
-        if len(records) % (len(SYSTEMS) * 10) == 0:
+        done_q_idx.add(q_idx)
+        if len(done_q_idx) % CHECKPOINT_EVERY == 0:
+            _save_checkpoint()
             elapsed = time.time() - t_start
-            print(f"[INFO] {len(records)//len(SYSTEMS)}/{len(df_eval)} questions | "
-                  f"{elapsed:.0f}s elapsed")
+            print(f"[INFO] {len(done_q_idx)}/{len(df_eval)} questions | "
+                  f"{elapsed:.0f}s elapsed | checkpoint saved")
 
+    except UnrecoverableCudaError as e:
+        # Flush everything completed so far, then stop. The CUDA context is
+        # dead; continuing in this process would only produce empty answers
+        # and corrupt the results with fabricated failures.
+        _save_checkpoint()
+        n_done = len(done_q_idx)
+        logger.error(
+            f"\n{'='*70}\n"
+            f"UNRECOVERABLE CUDA FAULT after {n_done}/{len(df_eval)} questions.\n"
+            f"{e}\n\n"
+            f"Progress SAVED to {CHECKPOINT_FILE} ({n_done} questions).\n"
+            f"The CUDA context cannot be repaired in-process — restart required.\n"
+            f"RESUME by re-running the exact same command; completed questions\n"
+            f"are skipped automatically. No work beyond the last {CHECKPOINT_EVERY}\n"
+            f"questions has been lost.\n{'='*70}"
+        )
+        raise SystemExit(2)
+
+    _save_checkpoint()
     df_results = pd.DataFrame(records)
 
     if not skip_bertscore:
@@ -556,11 +751,49 @@ def run_evaluation(
         bs = compute_bertscore_batch(preds, refs, skip=skip_bertscore)
         df_results["bertscore_f1"] = bs
 
+    df_results = append_oracle_upper_bound(df_results)
+
     df_results.to_csv(OUT_DIR / "per_question_results.csv", index=False)
     print(f"[INFO] Per-question results saved: {OUT_DIR / 'per_question_results.csv'}")
 
+    # Full results are on disk; drop the recovery checkpoint so a subsequent
+    # clean run cannot be silently resumed from this one.
+    if CHECKPOINT_FILE.exists():
+        CHECKPOINT_FILE.unlink()
+        print(f"[INFO] Removed recovery checkpoint {CHECKPOINT_FILE}")
+
     snapshot_api.close()
     return df_results
+
+
+def append_oracle_upper_bound(df: pd.DataFrame) -> pd.DataFrame:
+    """Add the Oracle system: per question, the single best-scoring mode.
+
+    This is the ceiling any router could achieve on this eval set. It is
+    computed from generations that already exist (the T / T+E / T+E+K rows),
+    so it trains nothing and cannot leak into the router — it is purely a
+    reporting upper bound. Selection uses the same composite weighting the
+    oracle-label pipeline uses (0.60*BERTScore + 0.25*ROUGE-L + 0.15*EM),
+    so the ceiling is defined consistently with how router labels were made.
+    """
+    base = df[df["system"].isin(MODES)].copy()
+    if base.empty:
+        return df
+
+    em = (base["predicted_answer"].str.lower().str.strip()
+          == base["reference"].str.lower().str.strip()).astype(float)
+    base["_composite"] = (0.60 * base["bertscore_f1"]
+                          + 0.25 * base["rouge_l"]
+                          + 0.15 * em)
+
+    best_idx = base.groupby("q_idx")["_composite"].idxmax()
+    oracle = base.loc[best_idx].copy()
+    oracle["system"] = "Oracle"
+    oracle = oracle.drop(columns=["_composite"])
+
+    n_by_mode = oracle["mode_used"].value_counts().to_dict()
+    print(f"[INFO] Oracle upper bound mode distribution: {n_by_mode}")
+    return pd.concat([df, oracle], ignore_index=True)
 
 
 # -- Analysis & reporting --------------------------------------------------------
@@ -663,7 +896,12 @@ def plot_summary_bars(summary: pd.DataFrame, out_dir: Path) -> None:
     metrics = ["BLEU", "ROUGE-L", "BERTScore-F1"]
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    colors = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2"]
+    # One colour per entry in SYSTEMS (7 as of the 2026-08-12 baseline
+    # additions). Cycled defensively so adding a system can never crash
+    # plotting with an IndexError.
+    _palette = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2",
+                "#937860", "#DA8BC3"]
+    colors = [_palette[i % len(_palette)] for i in range(len(SYSTEMS))]
 
     for ax, metric in zip(axes, metrics):
         bars = ax.bar(summary["System"], summary[metric], color=colors)
@@ -712,7 +950,12 @@ def plot_latency_vs_quality(summary: pd.DataFrame, out_dir: Path) -> None:
     fig_dir = out_dir / "figures"
 
     fig, ax = plt.subplots(figsize=(8, 6))
-    colors = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2"]
+    # One colour per entry in SYSTEMS (7 as of the 2026-08-12 baseline
+    # additions). Cycled defensively so adding a system can never crash
+    # plotting with an IndexError.
+    _palette = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2",
+                "#937860", "#DA8BC3"]
+    colors = [_palette[i % len(_palette)] for i in range(len(SYSTEMS))]
 
     for i, (_, row) in enumerate(summary.iterrows()):
         ax.scatter(row["Avg-Latency-ms"], row["BERTScore-F1"],

@@ -22,6 +22,14 @@ import platform
 import importlib.metadata as importlib_metadata
 from datetime import datetime
 
+# Must be set before `torch`/CUDA context initialization to take effect.
+# Reduces PyTorch caching-allocator fragmentation under the wide allocation-
+# size variance introduced by retrieval-augmented (variable-length)
+# training prompts. Pure memory-management setting — no effect on training
+# data, labels, or results. See RESEARCH_LOG.md, 2026-08-07 BSOD incident.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+import numpy as np
 import torch
 import pandas as pd
 from pathlib import Path
@@ -31,18 +39,26 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
+    EarlyStoppingCallback,
     set_seed
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 
 from src.model.prompts import build_user_message
+from src.model.context_budget import build_budgeted_context, MAX_SEQ_LENGTH
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 # Model & Paths
 MODEL_ID = "google/medgemma-1.5-4b-it"
-DATA_PATH = Path("data/lakehouse/qa/ehrqa_finetune.parquet")
+# data/qa/ is canonical (written by src/qa/generate_synthetic_ehrqa.py).
+# Was previously data/lakehouse/qa/ — a stale, pre-2026-08-06-audit snapshot
+# with different hadm_ids and zero contraindication_check examples. The
+# 2026-08-08 training run was inadvertently trained on that stale file (its
+# own log's "Unique admissions: 167" matches the stale file exactly, not
+# the fresh file's 137). See RESEARCH_LOG.md, 2026-08-09 entry.
+DATA_PATH = Path("data/qa/ehrqa_finetune.parquet")
 OUTPUT_DIR = Path("models/medgemma-4b-qlora")
 
 # Reproducibility
@@ -52,7 +68,14 @@ set_seed(SEED)
 # QLoRA Hyperparameters
 LORA_R = 16
 LORA_ALPHA = 32
-LORA_DROPOUT = 0.05
+# Raised 0.05 -> 0.10 after the 2026-08-08 run overfit hard: eval_loss
+# plateaued by ~epoch 0.5 (~60/240 steps) while train_loss kept falling
+# toward ~0.03, and the resulting adapter frequently generated degenerate
+# output (echoing retrieved-passage context instead of answering — see
+# RESEARCH_LOG.md, 2026-08-09 "oracle answers are context echoes" entry).
+# More dropout is a standard, low-risk regularization response to this
+# specific overfitting signature.
+LORA_DROPOUT = 0.10
 TARGET_MODULES = "all-linear"  # Best practice for Gemma architectures
 
 # Context modes sampled during training, and their relative sampling weights.
@@ -75,6 +98,14 @@ TARGET_MODULES = "all-linear"  # Best practice for Gemma architectures
 # select at inference time, rather than being systematically better at
 # whichever single mode it happened to be trained on.
 CONTEXT_MODE_WEIGHTS = {"T": 1.0, "T+E": 1.0, "T+E+K": 1.0}
+
+# Fraction of ehrqa_finetune.parquet held out as the SFTTrainer eval split.
+# Lowered from 0.10 to 0.04 after a 2026-08-07 crash during the first eval
+# pass on a 6 GB card: with per_device_eval_batch_size=1, a 100-example eval
+# set (0.10 of 1000) took ~25+ minutes of sustained load per eval pass. A
+# smaller eval set still tracks eval_loss for early stopping / best-model
+# selection without that much sustained-load exposure. See RESEARCH_LOG.md.
+EVAL_FRACTION = 0.04
 
 # ── Pre-Flight Validation ─────────────────────────────────────────────────────
 
@@ -336,16 +367,37 @@ def load_and_prep_data(tokenizer: AutoTokenizer) -> Dataset:
                        f"Labs: {labs}\n"
                        f"Medications: {medications}")
 
-        messages = [
-            {"role": "user", "content": build_user_message(context, row["question"])},
-            {"role": assistant_role, "content": str(row["answer"])}
-        ]
+        # Enforce per-section token budgets so the question and the gold
+        # answer can never be truncated away, and so passages/EHR/KG each get
+        # a fixed allowance (keeping the T / T+E / T+E+K contrast clean).
+        # See src/model/context_budget.py for the full rationale.
+        context = build_budgeted_context(context, tokenizer)
 
-        formatted_text = tokenizer.apply_chat_template(messages, tokenize=False)
-        return {"text": formatted_text}
+        # prompt / completion (NOT a single "text" field). This is what lets
+        # SFTConfig(completion_only_loss=True) mask the prompt out of the
+        # loss. Previously this returned one concatenated "text" string, so
+        # loss was computed over the ~2,100-2,600-token context as well as
+        # the ~24-token answer — i.e. >99% of the gradient signal was
+        # "reproduce the context", which is what trained the model to echo.
+        # See RESEARCH_LOG.md, 2026-08-10 pre-training audit, finding A.
+        prompt_text = tokenizer.apply_chat_template(
+            [{"role": "user", "content": build_user_message(context, row["question"])}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        return {"prompt": prompt_text, "completion": str(row["answer"])}
 
     dataset = Dataset.from_pandas(df)
-    dataset = dataset.map(format_prompt, desc="Formatting Prompts (retrieval-augmented)")
+    # remove_columns=... drops every original QA column so the resulting
+    # dataset has EXACTLY {prompt, completion}. TRL keys its prompt-completion
+    # (loss-masked) path off that schema; leaving stray columns risks it
+    # falling back to plain language-modelling, which is the bug being fixed.
+    _orig_cols = list(dataset.column_names)
+    dataset = dataset.map(
+        format_prompt,
+        desc="Formatting Prompts (retrieval-augmented, budgeted)",
+        remove_columns=_orig_cols,
+    )
     retriever.close()
     # Free the retriever's GPU-resident embedding model before SFTTrainer
     # allocates for the (much larger) MedGemma model — this project targets
@@ -368,8 +420,47 @@ def load_and_prep_data(tokenizer: AutoTokenizer) -> Dataset:
               "train/inference alignment fix — investigate before treating "
               "this as the final fine-tune run.")
 
-    dataset = dataset.remove_columns(["_context_mode"])
-    dataset = dataset.train_test_split(test_size=0.1, seed=SEED)
+    # Token-length diagnostic + HARD ASSERTION.
+    # The 2026-08-08 run silently truncated away the question and answer in
+    # 88.3% of examples (max_length=768 vs. p50 context of ~2,575 tokens,
+    # with truncation_mode="keep_start"). Nothing failed loudly; the model
+    # just learned to continue context. This check makes that class of bug
+    # impossible to repeat silently: if budgeting ever fails to keep full
+    # sequences under MAX_SEQ_LENGTH, training aborts instead of starting a
+    # ~27-hour run on quietly-corrupted data.
+    n_check = min(200, len(dataset))
+    full_lens, prompt_lens, completion_lens = [], [], []
+    for i in range(n_check):
+        ex = dataset[i]
+        p_ids = tokenizer(ex["prompt"], add_special_tokens=False)["input_ids"]
+        c_ids = tokenizer(ex["completion"], add_special_tokens=False)["input_ids"]
+        prompt_lens.append(len(p_ids))
+        completion_lens.append(len(c_ids))
+        full_lens.append(len(p_ids) + len(c_ids))
+
+    def _pct(vals, q):
+        s = sorted(vals)
+        return s[min(int(len(s) * q), len(s) - 1)]
+
+    print(f"[INFO] Token lengths over {n_check} budgeted examples:")
+    print(f"         prompt     p50={_pct(prompt_lens,.5)} p90={_pct(prompt_lens,.9)} max={max(prompt_lens)}")
+    print(f"         completion p50={_pct(completion_lens,.5)} p90={_pct(completion_lens,.9)} max={max(completion_lens)}")
+    print(f"         full       p50={_pct(full_lens,.5)} p90={_pct(full_lens,.9)} max={max(full_lens)}"
+          f"   (MAX_SEQ_LENGTH={MAX_SEQ_LENGTH})")
+
+    n_over = sum(1 for L in full_lens if L > MAX_SEQ_LENGTH)
+    if n_over:
+        raise ValueError(
+            f"ABORT: {n_over}/{n_check} budgeted examples still exceed "
+            f"MAX_SEQ_LENGTH={MAX_SEQ_LENGTH} (max seen {max(full_lens)}). "
+            "Training would silently truncate the question/answer away — the "
+            "exact bug that produced the 2026-08-08 context-echoing model. "
+            "Lower the per-section budgets in src/model/context_budget.py."
+        )
+    print(f"[INFO] ✅ All {n_check} sampled sequences fit within MAX_SEQ_LENGTH "
+          f"— question and gold answer are guaranteed intact.")
+
+    dataset = dataset.train_test_split(test_size=EVAL_FRACTION, seed=SEED)
 
     print(f"[INFO] Train size : {len(dataset['train'])} samples")
     print(f"[INFO] Eval size  : {len(dataset['test'])} samples")
@@ -432,12 +523,69 @@ def setup_model_and_tokenizer(torch_dtype):
     return model, tokenizer, peft_config
 
 
+# Files a checkpoint written by SFTTrainer/Trainer.save_model()+_save_checkpoint()
+# must all contain to be safely resumable. Discovered via the 2026-08-07
+# BSOD incident: a crash mid-write left a "checkpoint-40" directory with
+# complete model weights but a truncated optimizer.pt and no scheduler.pt/
+# rng_state*.pth/trainer_state.json — silently trusting that directory would
+# have either crashed resume_from_checkpoint or, worse, resumed with
+# optimizer/scheduler/RNG state reset while believing it was a real resume.
+REQUIRED_CHECKPOINT_FILES = [
+    "trainer_state.json",
+    "optimizer.pt",
+    "scheduler.pt",
+    "adapter_model.safetensors",
+    "adapter_config.json",
+]
+
+
+def _is_complete_checkpoint(ckpt_dir: str) -> tuple[bool, list[str]]:
+    """Returns (is_complete, missing_file_list). RNG state filename varies
+    by transformers version / distributed setup (rng_state.pth vs.
+    rng_state_0.pth etc.), so it's checked via glob rather than exact name."""
+    missing = [f for f in REQUIRED_CHECKPOINT_FILES
+               if not os.path.exists(os.path.join(ckpt_dir, f))]
+    if not glob.glob(os.path.join(ckpt_dir, "rng_state*.pth")):
+        missing.append("rng_state*.pth")
+    return (len(missing) == 0, missing)
+
+
 def get_last_checkpoint() -> str | None:
-    """Finds the most recent checkpoint if training was interrupted."""
-    if OUTPUT_DIR.exists():
-        checkpoints = glob.glob(os.path.join(OUTPUT_DIR, "checkpoint-*"))
-        if checkpoints:
-            return max(checkpoints, key=os.path.getmtime)
+    """Finds the most recent VALID (complete, safely resumable) checkpoint.
+    Skips — with a loud warning — any checkpoint left incomplete by a crash
+    mid-write, and automatically falls back to the next-newest valid one
+    instead of either resuming from a corrupt checkpoint or silently
+    restarting from step 0 without explanation."""
+    if not OUTPUT_DIR.exists():
+        print("[INFO] No output directory yet — starting from step 0.")
+        return None
+
+    checkpoints = sorted(
+        glob.glob(os.path.join(OUTPUT_DIR, "checkpoint-*")),
+        key=os.path.getmtime, reverse=True,
+    )
+    if not checkpoints:
+        print("[INFO] No checkpoints found — starting from step 0.")
+        return None
+
+    for ckpt in checkpoints:
+        is_complete, missing = _is_complete_checkpoint(ckpt)
+        if is_complete:
+            try:
+                with open(os.path.join(ckpt, "trainer_state.json")) as f:
+                    state = json.load(f)
+                print(f"[INFO] Valid checkpoint found: {ckpt} "
+                      f"(global_step={state.get('global_step')}, "
+                      f"epoch={state.get('epoch'):.3f})")
+            except Exception as e:
+                print(f"[INFO] Valid checkpoint found: {ckpt} "
+                      f"(could not read trainer_state.json for step/epoch: {e})")
+            return ckpt
+        else:
+            print(f"[WARN] Skipping INCOMPLETE checkpoint {ckpt} "
+                  f"(missing: {missing}) — likely interrupted mid-write by a crash.")
+
+    print("[WARN] All checkpoints found were incomplete. Starting from step 0.")
     return None
 
 
@@ -448,6 +596,21 @@ def _get_version(pkg_name: str) -> str:
         return importlib_metadata.version(pkg_name)
     except Exception:
         return "unknown"
+
+
+class _NumpyJSONEncoder(json.JSONEncoder):
+    """json.dump can't serialize numpy scalar types natively.
+    context_mode_distribution comes from pd.Series(...).value_counts(),
+    whose values are numpy int64 — this crashed the 2026-08-08 training run
+    (27h48m of training completed successfully; only this final metadata
+    write failed, after model/tokenizer/trainer-state were already safely on
+    disk). See RESEARCH_LOG.md."""
+    def default(self, o):
+        if isinstance(o, (np.integer,)):
+            return int(o)
+        if isinstance(o, (np.floating,)):
+            return float(o)
+        return super().default(o)
 
 
 def save_training_metadata(peft_config: LoraConfig, training_args: SFTConfig,
@@ -499,7 +662,7 @@ def save_training_metadata(peft_config: LoraConfig, training_args: SFTConfig,
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     metadata_path = OUTPUT_DIR / "training_metadata.json"
     with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
+        json.dump(metadata, f, indent=2, cls=_NumpyJSONEncoder)
     print(f"[INFO] Saved training metadata to {metadata_path}")
 
 
@@ -531,16 +694,44 @@ def main():
     print("═" * 60)
 
     # TRL 1.6.0 SFTConfig
+    # max_length lowered 1024 -> 768 after a 2026-08-07 crash: retrieval-
+    # augmented prompts (up to 5 note passages + EHR snapshot + KG facts for
+    # T+E+K) are structurally much longer than the old flattened-snapshot
+    # text this was originally tuned for, and step time on a 6 GB card
+    # correlates strongly with sequence length. See the token-length
+    # diagnostic printed in load_and_prep_data() and RESEARCH_LOG.md.
     training_args = SFTConfig(
         output_dir=str(OUTPUT_DIR),
-        dataset_text_field="text",
-        max_length=1024,  # TRL 1.6.0 renamed this from `max_seq_length` -> `max_length`
+
+        # completion_only_loss=True masks the prompt out of the loss so ONLY
+        # the gold answer contributes gradient. Requires the prompt/completion
+        # dataset schema built in load_and_prep_data(). This is the primary
+        # fix for the 2026-08-08 context-echoing model: previously the config
+        # used dataset_text_field="text" with completion_only_loss unset
+        # (None), so loss ran over the full ~2,100-2,600-token context too and
+        # >99% of the training signal was "reproduce the context".
+        completion_only_loss=True,
+
+        # Single shared sequence budget (was 768 here, 2048 in
+        # run_evaluation.py, and unbounded in oracle_labels.py — three
+        # different effective context lengths across the pipeline).
+        # Contexts are pre-budgeted per-section by context_budget.py, and the
+        # assertion in load_and_prep_data() proves nothing overflows, so this
+        # limit should never actually truncate anything.
+        max_length=MAX_SEQ_LENGTH,
 
         # Memory & Batching
+        # optim: non-paged adamw_8bit, not paged_adamw_8bit. Paged optimizers
+        # use CUDA Unified Memory (UVM) demand-paging, which is documented as
+        # unstable under sustained load on Windows WDDM (unlike Linux) and is
+        # the primary suspect for the 2026-08-07 BSOD (KMODE_EXCEPTION_NOT_
+        # HANDLED / nvlddmkm.sys). Unnecessary here regardless: LoRA has only
+        # ~38M trainable params, so 8-bit optimizer state is tens of MB —
+        # far too small to need paging. See RESEARCH_LOG.md.
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=grad_accum,
         per_device_eval_batch_size=1,
-        optim="paged_adamw_8bit",
+        optim="adamw_8bit",
         dataloader_pin_memory=True,
         remove_unused_columns=False,
 
@@ -555,12 +746,24 @@ def main():
         max_grad_norm=0.3,
         warmup_ratio=0.03,
 
-        # Evaluation & Saving
+        # Evaluation & Saving — fault-tolerance settings per the 2026-08-07
+        # incomplete-checkpoint incident (RESEARCH_LOG.md):
+        # eval_steps/save_steps: 20 (original) -> 40 -> 25 -> 15 now. A crash
+        # can only ever lose progress made *since* the last complete
+        # checkpoint, so this bounds that loss to ~15 steps regardless of
+        # cause. save_steps must stay a multiple of eval_steps for
+        # load_best_model_at_end to work, so both move together.
+        # save_total_limit: 2 -> 3. The 2026-08-07 crash corrupted the
+        # checkpoint being written *at the moment of the crash* — a second
+        # crash could do the same to whatever is then the newest checkpoint.
+        # Keeping 3 means get_last_checkpoint()'s validity-skip-and-fall-back
+        # logic (see that function) has two older checkpoints in reserve,
+        # not just one, before falling back to step 0.
         eval_strategy="steps",
-        eval_steps=20,
+        eval_steps=15,
         save_strategy="steps",
-        save_steps=20,
-        save_total_limit=2,
+        save_steps=15,
+        save_total_limit=3,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
@@ -574,17 +777,39 @@ def main():
         report_to="none"
     )
 
+    # Added after the 2026-08-08 run trained the full 2 epochs (240 steps)
+    # despite eval_loss plateauing by ~step 60 — the ~180 extra steps of
+    # continued training on a near-zero train_loss almost certainly drove
+    # the overfitting that produced degenerate (context-echoing) generation.
+    # patience=3 means training stops after 3 consecutive eval checks
+    # (eval_steps=15 each) with no eval_loss improvement — i.e. up to ~45
+    # steps of no-improvement buffer past the best point, not stopping on a
+    # single noisy eval. Requires load_best_model_at_end=True (already set)
+    # to actually restore the best checkpoint's weights at the end.
+    early_stopping = EarlyStoppingCallback(early_stopping_patience=3)
+
     trainer = SFTTrainer(
     model=model,
     args=training_args,
     train_dataset=dataset["train"],
     eval_dataset=dataset["test"],
     processing_class=tokenizer,
+    callbacks=[early_stopping],
 )
 
     last_checkpoint = get_last_checkpoint()
+    print("\n" + "═" * 60)
     if last_checkpoint:
-        print(f"\n[INFO] Resuming training from checkpoint: {last_checkpoint}")
+        print(f" RESUMING FROM CHECKPOINT: {last_checkpoint}")
+        print(" Model weights, optimizer state, LR scheduler state, RNG")
+        print(" state, and Trainer state (global_step/epoch/best-metric")
+        print(" tracking) will all be restored from this checkpoint by")
+        print(" transformers' built-in resume_from_checkpoint mechanism —")
+        print(" this only runs at all because get_last_checkpoint() already")
+        print(" validated every required file is present (see that function).")
+    else:
+        print(" STARTING FROM STEP 0 — no valid checkpoint was found.")
+    print("═" * 60)
 
     print("\n[INFO] 🚀 Commencing QLoRA Fine-Tuning...")
     try:

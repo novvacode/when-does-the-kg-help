@@ -54,16 +54,24 @@ import numpy as np
 import pandas as pd
 
 from src.retrieval.retriever import Retriever, Mode
+from src.model.context_budget import build_budgeted_context
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-INPUT_TRAIN_A = Path("data/lakehouse/qa/ehrqa_router_train.parquet")
-INPUT_TRAIN_B = Path("data/qa/ehrqa_router_train.parquet")
+# data/qa/ is the ONLY canonical QA output location — it's what
+# src/qa/generate_synthetic_ehrqa.py actually writes to (see its OUT_DIR).
+# A previous version of this file also checked data/lakehouse/qa/ FIRST as a
+# fallback; that directory turned out to hold a stale snapshot from before
+# the 2026-08-06 audit (different, older hadm_ids; zero
+# contraindication_check rows — that question type didn't exist yet when it
+# was generated) and was silently preferred over the fresh data whenever
+# both existed, which is exactly why the sparsity join went to 0% — sparsity
+# .parquet is computed from data/qa/, so the two hadm_id populations barely
+# overlapped. See RESEARCH_LOG.md, 2026-08-09 entry, for the full trace.
+# data/lakehouse/qa/ has been archived; do not resurrect a fallback to it.
+INPUT_TRAIN = Path("data/qa/ehrqa_router_train.parquet")
+INPUT_VAL   = Path("data/qa/ehrqa_router_val.parquet")
 
-INPUT_VAL_A   = Path("data/lakehouse/qa/ehrqa_router_val.parquet")
-INPUT_VAL_B   = Path("data/qa/ehrqa_router_val.parquet")
-
-# FIX: sparsity file path
 SPARSITY_FILE = Path("data/lakehouse/sparsity.parquet")
 
 OUT_DIR   = Path("data/router")
@@ -73,14 +81,12 @@ OUT_VAL   = OUT_DIR / "router_val_examples.parquet"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def get_input_path(path_a: Path, path_b: Path) -> Path:
-    if path_a.exists():
-        return path_a
-    if path_b.exists():
-        return path_b
+def get_input_path(path: Path) -> Path:
+    if path.exists():
+        return path
     raise FileNotFoundError(
-        f"Dataset not found at {path_a} or {path_b}. "
-        "Please ensure Phase 1 generation is complete."
+        f"Dataset not found at {path}. "
+        "Run: python -m src.qa.generate_synthetic_ehrqa"
     )
 
 
@@ -159,6 +165,7 @@ def process_split(
     input_path:  Path,
     output_path: Path,
     retriever:   Retriever,
+    tokenizer,
 ) -> Tuple[int, Dict[str, Any]]:
     """
     Process a single QA dataset split. Runs retrieval for T, T+E, and T+E+K.
@@ -222,6 +229,14 @@ def process_split(
         for mode_name, result in results.items():
             r_stats = result.stats
 
+            # Apply the SAME per-section token budgeting used at training
+            # time, so the prompts oracle_labels.py scores (it reads
+            # prompt_context straight out of this parquet) are identical in
+            # length/structure to what the model was fine-tuned on.
+            # Previously oracle generation used unbounded contexts while
+            # training truncated at 768 — see RESEARCH_LOG.md 2026-08-10.
+            budgeted_context = build_budgeted_context(result.prompt_context, tokenizer)
+
             records.append({
                 "question":              question,
                 "answer":                answer,
@@ -232,8 +247,10 @@ def process_split(
                                                     default=numpy_json_encoder),
                 "has_ehr":               r_stats["has_ehr"],
                 "n_kg_facts":            r_stats["n_kg_facts"],
-                "prompt_context":        result.prompt_context,
-                "prompt_token_estimate": r_stats["n_tokens_approx"],
+                "prompt_context":        budgeted_context,
+                "prompt_token_estimate": len(
+                    tokenizer(budgeted_context, add_special_tokens=False)["input_ids"]
+                ),
                 "retrieval_latency_ms":  r_stats["latency_ms"],
                 "n_labs":                n_labs,
                 "n_diag":                n_diag,
@@ -243,7 +260,13 @@ def process_split(
             })
 
             stats[mode_name]["latency"]  += r_stats["latency_ms"]
-            stats[mode_name]["tokens"]   += r_stats["n_tokens_approx"]
+            # Accumulate the REAL tokenized length of the BUDGETED context —
+            # not RetrievalResult.n_tokens_approx, which is an unbudgeted
+            # len(text)//4 estimate of the pre-budgeting context. Using the
+            # approximation here reported ~1924 tokens for mode T when the
+            # stored context is actually 442 (a 4x overstatement), and this
+            # figure feeds the paper's prompt-cost/efficiency analysis.
+            stats[mode_name]["tokens"]   += records[-1]["prompt_token_estimate"]
             stats[mode_name]["kg_facts"] += r_stats["n_kg_facts"]
             stats[mode_name]["count"]    += 1
 
@@ -295,12 +318,18 @@ def print_summary(split_name: str, n_questions: int, stats: Dict[str, Any]) -> N
 def main():
     print("[INFO] Starting Router Dataset Generation Pipeline...")
 
-    train_path = get_input_path(INPUT_TRAIN_A, INPUT_TRAIN_B)
-    val_path   = get_input_path(INPUT_VAL_A,   INPUT_VAL_B)
+    train_path = get_input_path(INPUT_TRAIN)
+    val_path   = get_input_path(INPUT_VAL)
 
     kg_module = load_kg_module()
     print("[INFO] Initializing Unified Retriever...")
     retriever = Retriever(kg_module=kg_module)
+
+    # MedGemma's own tokenizer — context budgeting must be measured in the
+    # same tokens the generator will actually consume.
+    from transformers import AutoTokenizer
+    print("[INFO] Loading tokenizer for context budgeting...")
+    tokenizer = AutoTokenizer.from_pretrained("google/medgemma-1.5-4b-it")
 
     try:
         train_q_count, train_stats = process_split(
@@ -308,6 +337,7 @@ def main():
             input_path=train_path,
             output_path=OUT_TRAIN,
             retriever=retriever,
+            tokenizer=tokenizer,
         )
         print_summary("Router Train Split", train_q_count, train_stats)
 
@@ -316,6 +346,7 @@ def main():
             input_path=val_path,
             output_path=OUT_VAL,
             retriever=retriever,
+            tokenizer=tokenizer,
         )
         print_summary("Router Val Split", val_q_count, val_stats)
 

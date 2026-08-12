@@ -24,7 +24,7 @@ from src.model.prompts import build_user_message
 
 BASE_MODEL = "google/medgemma-1.5-4b-it"
 ADAPTER_PATH = "models/medgemma-4b-qlora"
-EVAL_DATA = "data/lakehouse/qa/ehrqa_eval.parquet"
+EVAL_DATA = "data/qa/ehrqa_eval.parquet"  # data/qa/ is canonical — see RESEARCH_LOG.md, 2026-08-09
 
 # ==========================================================
 # Load Evaluation Sample
