@@ -1,0 +1,52 @@
+# Direct dependencies for the `ehr-rag` conda env (Python 3.11).
+# Hand-curated: these are the packages actually imported by src/, pinned to the
+# versions the reported results were produced with. Transitive dependencies are
+# deliberately not listed — pip resolves them.
+#
+# PyTorch is NOT pinned here because it needs the CUDA wheel index. Install it
+# first, exactly as README "Installation" says:
+#
+#   pip install torch==2.5.1+cu121 torchvision torchaudio \
+#       --index-url https://download.pytorch.org/whl/cu121
+#
+#   pip install -r requirements.txt
+#
+# Verified working set as of 2026-08-13 on Windows 11 / CUDA 12.1 / RTX 4050.
+
+# --- generation: MedGemma 1.5-4B + QLoRA -------------------------------------
+transformers==5.12.1
+peft==0.19.1
+trl==1.6.0
+bitsandbytes==0.49.2
+accelerate==1.14.0
+datasets==5.0.0
+
+# --- retrieval: FAISS text index + BGE embeddings ----------------------------
+sentence-transformers==5.6.0
+faiss-cpu==1.14.3
+
+# --- data: MIMIC-IV lakehouse + medical knowledge graph ----------------------
+duckdb==1.5.4
+pyarrow==24.0.0
+neo4j==6.2.0
+
+# --- router: XGBoost + feature pipeline + explainability ---------------------
+xgboost==3.2.0
+scikit-learn==1.9.0
+shap==0.51.0            # src/evaluation/router_shap.py; also enables the
+                        # dormant SHAP hook in src/router/train_router.py
+
+# --- evaluation metrics ------------------------------------------------------
+bert-score==0.3.13
+rouge-score==0.1.2
+nltk==3.9.4
+
+# --- numerics, plotting, misc ------------------------------------------------
+# NOTE: numpy's runtime __version__ is 2.4.6 in this env while its dist-info
+# records 2.4.4 (mixed conda/pip install). 2.4.6 is what actually ran.
+numpy==2.4.6
+pandas==3.0.3
+scipy==1.17.1
+matplotlib==3.11.0
+seaborn==0.13.2
+tqdm==4.68.3

@@ -7,6 +7,137 @@ without needing to read commit-by-commit diffs.
 
 ---
 
+## 2026-08-13 — SHAP attribution on the deployed router (journal extension)
+
+First work of the JBI journal extension. Adds feature-attribution evidence for
+the routing behaviour that the feature ablation (Table VI) established only at
+the performance level. **Nothing was retrained**; `models/router/` was opened
+read-only, and the generator/QLoRA adapter were not touched.
+
+`shap` was not installed (this is why `shap_summary.png` never existed despite
+the dormant hook at `train_router.py:186`, and why the 2026-08-14 entry could
+only conjecture about per-case attribution). Installed **shap 0.51.0**; numpy
+2.4.6 / torch 2.5.1+cu121 / xgboost 3.2.0 unchanged afterwards.
+
+New script: `src/evaluation/router_shap.py` (`python -m src.evaluation.router_shap`).
+
+### Both tiers reproduced the deployed decision function before any attribution
+
+Attributions over a feature vector the router never actually saw would be
+worthless, so each tier is gated first:
+
+| tier | set | gate | result |
+|---|---|---|---|
+| A | router_val, n=100 (the rows Table VI uses) | re-predicted probs vs `router_predictions.csv` | max abs delta **2.97e-08**, mode agreement **100%** |
+| B | final held-out eval, n=300 (deployed decisions) | re-predicted mode vs `mode_used` | **300/300 = 100%**, 0 disagreements |
+
+Tier B's 5 structural features were reconstructed via `PatientSnapshot` exactly
+as `run_evaluation.py::get_struct_features` does; the perfect agreement confirms
+the reconstruction is exact. SHAP additivity (base + Σφ vs raw margin) holds to
+6.2e-07 (A) and 8.3e-07 (B).
+
+### Block attribution CORROBORATES Table VI
+
+Mean |SHAP| summed within block, pooled over classes:
+
+| tier | embedding block (384) | patient block (5) | patient share |
+|---|---|---|---|
+| A (n=100) | 2.1008 | 0.2247 | **9.66%** |
+| B (n=300) | 2.1169 | 0.2048 | **8.82%** |
+
+Per class (tier A): T 85.6/14.4, T+E 90.0/10.0, T+E+K **95.3/4.7**. The router's
+KG decision is the *least* patient-informed of the three — consistent with the
+H2 mechanism (KG retrieval keys off the diagnosis list, so patient state cannot
+inform whether the KG will help).
+
+### But the per-FEATURE view is NOT the 98.4/1.6 story gain importance told
+
+The block comparison sums 384 features against 5, which flatters the larger
+block. Per feature, pooled:
+
+| tier | avg embedding dim | avg patient feature | ratio |
+|---|---|---|---|
+| A | 0.005471 | 0.044941 | **8.21x** |
+| B | 0.005513 | 0.040964 | **7.43x** |
+
+Rank among all 389 features (tier B): **n_labs #5**, n_diag #14,
+sparsity_score #17, sparsity_bucket #50 — all nonzero on 300/300 rows.
+**n_meds is exactly 0.0 on every row and ranks #371**, independently confirming
+the dead-feature caveat recorded on 2026-08-14 (caveat #4).
+
+> ### ⚠ DO NOT CONFLATE THESE TWO CLAIMS
+>
+> Low **performance contribution** (Table VI: removing the patient features
+> costs +0.0000 accuracy / −0.0181 macro-F1) and low **attribution** (SHAP:
+> the patient block is ~9% of total |SHAP| mass) are *different measurements*
+> and they do **not** agree here. Per feature, the patient features are 7–8x
+> the average BGE dim; `n_labs` ranks **#5 of 389** and is nonzero on
+> **300/300** held-out rows.
+>
+> - ✅ Correct: **"question-driven, with performance-neutral use of patient
+>   state"** — the router consults patient features; consulting them does not
+>   improve routing.
+> - ❌ Wrong: "the router ignores patient state" / "patient features are
+>   unused" / "attribution confirms the ablation." The attribution result is
+>   *compatible* with the ablation, not a restatement of it.
+>
+> The collapse is easy to make and it overstates a negative result the paper
+> already reports honestly at the right strength. This sits alongside the two
+> standing corrections in SESSION_STATE.md §9 (the router is question-driven,
+> never "patient-adaptive"; mode T's EHR-contradiction is `n/a`, never 0.0000).
+
+**This does not contradict Table VI, and must not be reported as if it did.**
+Table VI measures *performance* contribution (removing the patient features
+costs +0.0000 accuracy / −0.0181 macro-F1); SHAP measures *attribution
+magnitude*. A feature can carry attribution and still be redundant — its
+information also recoverable from the question — or net-harmful. Both are true
+here: the router demonstrably consults patient state, and consulting it does
+not improve routing. The honest statement is **"question-driven with
+performance-neutral use of patient state"**, not "patient features are
+ignored". The 2026-08-14 reconciliation (structural features decisive on a
+minority of borderline cases, negligible in aggregate) is now directly
+evidenced rather than conjectured.
+
+The n_labs mechanism reproduces per-decision without hand-picking. Tier B row
+289, a `lab` question on an admission with no recorded labs: `n_labs` is the
+**#1** attribution over all 389 features (φ = +0.808 toward T, scaled value
+−1.45, the low end). This is the 2026-08-14 audit's hand-found mechanism,
+recovered automatically.
+
+### Faithfulness (deletion test) — SHAP's rankings are causal for this model
+
+Ablate the top-k features SHAP credits toward the predicted class (replace with
+the router_train mean), check P(predicted class) falls. Random-k control at the
+same budget, 5 repeats, seed 42.
+
+| tier | directional agreement | mean flip rate | AOPC top-k | AOPC random-k | ratio |
+|---|---|---|---|---|---|
+| A | **0.9133** | 0.300 | 0.1987 | 0.0071 | **27.9x** |
+| B | **0.8989** | 0.2545 | 0.1950 | 0.0076 | **25.8x** |
+
+Directional agreement reaches **1.0000 at k≥10** on tier B (0.99 at k≥10 on A);
+it is weakest at k=1 (0.61 B / 0.70 A), i.e. the single top-ranked feature alone
+is not always decisive, but small groups reliably are. Random-k barely moves the
+model (flip rate 0.011–0.013 vs 0.25–0.30). Both curves plateau by k≈20, meaning
+routing rests on a small set of features rather than diffuse mass across 389.
+
+**Caveat to carry into the write-up:** ablating a dense BGE dimension to its
+training mean is an off-manifold perturbation, so this measures the model's
+local sensitivity to the features SHAP credits, not a real-world intervention.
+That is the standard limitation of deletion-based faithfulness and should be
+stated, not glossed.
+
+### Artifacts (all under the gitignored `experiments/results/final_eval/`)
+
+`shap_group_attribution.csv` · `shap_feature_ranking.csv` ·
+`shap_per_decision_sample.csv` · `shap_faithfulness.csv` ·
+`shap_faithfulness_summary.csv` · `shap_faithfulness_per_row.csv` ·
+`shap_metadata.json` (versions, model sha256, seed, gate results) ·
+`figures/shap_beeswarm_tier{A,B}_{T,TE,TEK}.png` ·
+`figures/shap_faithfulness_curve_tier{A,B}.png`
+
+---
+
 ## 2026-08-07 — QLoRA training crash (bug + mitigation, no root cause confirmed yet)
 
 ### Incident
