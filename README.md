@@ -469,6 +469,15 @@ QLoRA (4-bit NF4 quantization) is required to fit MedGemma 1.5-4B within 6 GB VR
 
 ---
 
+## Project Status
+
+Research complete; remaining work is publication mechanics. See
+**[SESSION_STATE.md](SESSION_STATE.md)** for the full operational handoff — current
+state, what remains, known risks, and the exact next step. See
+[RESEARCH_LOG.md](RESEARCH_LOG.md) for the complete chronological research record.
+
+---
+
 ## Data Access and What This Repository Contains
 
 This project is built on [MIMIC-IV](https://physionet.org/content/mimiciv/), a
