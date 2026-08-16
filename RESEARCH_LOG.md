@@ -7,6 +7,129 @@ without needing to read commit-by-commit diffs.
 
 ---
 
+## 2026-08-16 — Human annotation study: `unsupported_rate` validates, `ehr_contradiction` does NOT
+
+First human evaluation in this project. 75 rows from the 300-question held-out
+set, stratified across all 7 systems (seed 42), annotated by the project owner
+blind to system identity and to the detector's labels (revealed only after
+both answers were given on a row). Tooling:
+`src/evaluation/build_annotation_sample.py` → `annotate.html` →
+`src/evaluation/annotation_agreement.py`.
+
+The unsupported threshold was **pre-registered at ≥ 0.5 on 2026-08-13, before
+any annotation**, specifically so it could not be tuned against the human
+labels. It was not changed. The 0.1–0.9 sweep below is robustness only.
+
+### Result 1 — `unsupported_rate` is validated
+
+| | n | human yes | detector yes | observed agr. | **Cohen's κ** | 95% CI |
+|---|---|---|---|---|---|---|
+| unsupported (≥0.5) | 75 | 29 (38.7%) | 30 (40.0%) | 0.8800 | **0.7486** | [0.5816, 0.8901] |
+
+TP 25 · TN 41 · FP 5 · FN 4. McNemar p = 1.0 — **no directional skew**; the
+detector errs symmetrically. κ = 0.75 is "substantial" and clears the project's
+own pre-registered ≥ 0.6 bar.
+
+Sweep: κ peaks at threshold 0.4 (0.7779) against 0.7486 at the pre-registered
+0.5 — adjacent and close, so the locked choice was near-optimal by luck rather
+than by tuning. **Do not retrofit 0.4.** Fitting the cut to the reference
+standard it is being judged against would invalidate the exercise.
+
+**Consequence:** H1 criterion 3 (the grounding failure) rests on a metric that
+now has human validation. That result stands on firmer ground than before, not
+weaker.
+
+### Result 2 — `ehr_contradiction` is NOT measuring contradiction
+
+| | n | human yes | detector yes | observed agr. | **Cohen's κ** | 95% CI |
+|---|---|---|---|---|---|---|
+| ehr_contradiction | 49 | 1 (2.0%) | 7 (14.3%) | 0.8367 | **−0.0370** | [−0.1011, 0.0000] |
+
+TP **0** · TN 41 · FP 7 · FN 1. McNemar p = 0.070, false-positive skew.
+κ is *negative* — agreement below chance. The 0.8367 observed agreement is
+entirely the shared "no" majority and means nothing at this prevalence.
+(26 mode-T rows excluded as n/a per the standing rule, not counted as
+agreement.)
+
+**Zero true positives. Every one of the detector's 7 positives was rejected by
+the human, and the mechanism is unambiguous** — each was triggered by a
+negation embedded in the ICD description itself:
+
+| row | question type | trigger |
+|---|---|---|
+| A002 | diagnoses | `without lesion` |
+| A009 | primary_diagnosis | `without myelopathy` |
+| A034 | primary_diagnosis | `without lesion` |
+| A046 | diagnoses | `not carried` |
+| A062 | diagnoses | `not carried` |
+| A069 | primary_diagnosis | `without hematuria` |
+| A072 | primary_diagnosis | `without complications` |
+
+`ehr_contradiction_score()` scans context lines containing "diagnos"/"lab",
+takes any token longer than 5 characters, and flags the answer if it contains
+`"no "/"not "/"without " + term`. ICD-10 descriptions routinely embed exactly
+that phrasing ("Spondylosis **without myelopathy**", "Type 2 diabetes
+**without complications**"). So an answer that *correctly copies the EHR's
+diagnosis string* is flagged as contradicting the EHR. The detector fires on
+ICD naming convention, and all 7 positives are on `diagnoses` /
+`primary_diagnosis` rows — the two question types whose gold answer is a
+verbatim diagnosis string.
+
+**Consequence for the paper:** the EHR-contradiction column (T+E 0.0247,
+T+E+K 0.0247, Router 0.0233) does not measure hallucination and must not be
+reported as if it does. The associated H1 claim — "EHR-contradiction is
+effectively tied (0.0233 vs 0.0247, p = 0.157)" — is a comparison between two
+quantities that are both artifacts. Either withdraw the column or report it
+explicitly as an unvalidated heuristic with κ ≈ 0 and 0 true positives.
+This is now the third measurement defect found in this metric, after the
+mode-T `n/a` problem (2026-08-15).
+
+### Carried forward: context drift
+
+Contexts are rebuilt because `run_evaluation.py` does not persist
+`prompt_context`. Retrieval reproduction was **exact** (0 label flips, mean
+|Δ| 0.000 vs eval time). Remaining drift is the deliberate choice to show the
+annotator — and score the detector on — the *budgeted* context the model
+actually received: 3/75 unsupported flips, 0 EHR flips, mean |Δ| 0.0531, all 3
+on mode T. Human and detector judged identical evidence, so this does not
+enter κ; it bounds how far these labels sit from the paper's own numbers.
+
+### Honest caveats
+
+1. **This is human-vs-detector agreement, NOT inter-annotator agreement.**
+   One annotator. The design doc's "Cohen's κ ≥ 0.6 between two human
+   annotators" is a different study and is still not done. Do not present this
+   as satisfying it.
+2. The annotator is the project owner — blind to system identity and detector
+   labels, but not to the project's hypotheses.
+3. **The EHR-contradiction κ is severely underpowered**: 1 human positive in
+   49 rows. The negative κ is directionally trustworthy (TP = 0 with 7 FP and
+   a fully explained mechanism), but the point estimate is unstable and the CI
+   must be reported with it.
+4. 75 rows over 7 systems is ~10–11 per system; this validates the metrics
+   overall, not per system.
+
+Artifacts (gitignored): `annotation_agreement.csv` ·
+`annotation_confusion_matrix.csv` · `annotation_threshold_sweep.csv` ·
+`annotation_disagreements.csv` (17 rows) · `sample_75.csv` ·
+`sample_metadata.json` · `annotate.html`.
+
+### Tooling defect found and fixed during this run
+
+The first sample build produced **0/19 T+E+K rows with KG facts** (12 had them
+at eval time) because the KG preflight only checked that `src.mkg.retrieval`
+*imports* — which opens no connection. Neo4j auth was failing, `Retriever`
+swallowed each failure, and contexts came back silently KG-less while the
+script reported "0 failed rebuilds". Aggregated over 75 rows this looked like a
+mild 6/75 drift; on the 19 affected rows unsupported nearly doubled
+(0.215 → 0.402). Fixed with (a) a real preflight that executes a Cypher query,
+(b) a hard integrity check that any T+E+K row with eval-time KG facts must
+rebuild with them, and (c) per-mode drift reporting so a single-mode fault
+cannot hide in an aggregate. The corrupt build is quarantined at
+`experiments/results/annotation/_INVALID_no_kg_2026-08-13/`.
+
+---
+
 ## 2026-08-13 — SHAP attribution on the deployed router (journal extension)
 
 First work of the JBI journal extension. Adds feature-attribution evidence for
