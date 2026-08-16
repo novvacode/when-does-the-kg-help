@@ -246,6 +246,12 @@ EHR-contradiction **undefined** for mode T (reported `n/a`, never 0%).
 ## 9. Important decisions and constraints
 
 **Non-negotiable:**
+- **`paper/` IS FROZEN (from 2026-08-17).** `paper/main.tex` is the conference paper
+  and may be submitted as-is. **Never edit anything under `paper/`** — not the
+  withdrawn EHR-contradiction column, not formatting, not the author block. All
+  journal-extension writing goes in **`paper_journal/`**, which started as a
+  byte-identical copy. This overrides any earlier instruction to fix numbers "in the
+  paper".
 - **Never commit patient data.** MIMIC-IV is under a PhysioNet DUA prohibiting
   redistribution. `.gitignore` is the guard — verify before any `git add -A`.
 - **Never regenerate `splits/patient_splits.json`.** It is the locked seed-42 partition.

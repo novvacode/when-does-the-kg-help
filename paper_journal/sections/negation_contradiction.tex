@@ -1,0 +1,199 @@
+% =====================================================================
+% DRAFT SECTION — negation-contradiction metric validation
+% =====================================================================
+% Written 2026-08-17. NOT yet inserted into paper/main.tex.
+%
+% WHERE THIS GOES
+%   Replaces the current treatment of "EHR-contradiction" in the evaluation
+%   section, and should sit after the main results table.
+%
+% CHANGES THIS REQUIRES ELSEWHERE IN main.tex (not made here):
+%   1. Main results table: the "EHR-Contra." column is withdrawn. Per the
+%      Option-A reporting decision, no corrected rate replaces it in the main
+%      table; the column is removed and this section explains why. If a
+%      reviewer asks for numbers, the per-type rates are in the artifacts.
+%   2. Abstract: the hallucination claim must no longer cite an
+%      EHR-contradiction rate. The defensible sentence is that the router is
+%      statistically indistinguishable from always-on hybrid on quality and
+%      significantly worse on grounding (unsupported-rate), with the
+%      contradiction heuristic withdrawn as invalid.
+%   3. Limitations: keep the mode-T n/a statement; add the Type-2 scope note
+%      and the "no abnormal" qualifier artifact from this section.
+%   4. H1 criterion 3: the sub-claim "EHR-contradiction is effectively tied
+%      (0.0233 vs 0.0247, p = 0.157)" MUST be deleted. It compared two
+%      quantities that are both artifacts. The unsupported-rate half of
+%      criterion 3 stands and is now human-validated.
+%
+% All numbers below are traceable to experiments/results/annotation{,_v2,_v3}/
+% and RESEARCH_LOG.md entries dated 2026-08-16 and 2026-08-17.
+% =====================================================================
+
+\section{Validating the Hallucination Heuristics}
+\label{sec:halluc-validation}
+
+Both hallucination measures used in Section~\ref{sec:results} are automatic
+lexical heuristics. We report a human validation of each. One survives; the
+other does not, and the manner of its failure is itself a result.
+
+A single annotator labelled stratified samples drawn from the held-out
+evaluation set, blind to system identity and to the detector's output, which
+was revealed only after a row had been answered. Decision rules were fixed in
+advance: for the unsupported-claim measure a continuous score was binarised at
+$\geq 0.5$, registered before any annotation and never retuned; for the
+contradiction measure any non-zero score counted as positive. We emphasise that
+this is \emph{human--detector} agreement, not inter-annotator agreement; the
+two-annotator study described in our protocol was not performed.
+
+\subsection{The unsupported-claim measure is validated}
+
+On 75 rows spanning all seven systems, the unsupported-claim heuristic reaches
+Cohen's $\kappa = 0.749$ (95\% CI $[0.582, 0.890]$) against human judgement,
+with 88.0\% observed agreement and no directional skew (McNemar $p = 1.0$;
+5 false positives against 4 false negatives). This clears the $\kappa \geq 0.6$
+threshold we pre-registered. A sensitivity sweep over binarisation thresholds
+from 0.1 to 0.9 peaks at 0.4 ($\kappa = 0.778$) against 0.749 at our registered
+cut of 0.5; we report the registered value, since selecting the
+$\kappa$-maximising threshold would fit the metric to the reference standard
+used to judge it.
+
+The grounding result in Section~\ref{sec:results} therefore rests on a measure
+with human validation behind it.
+
+\subsection{The EHR-contradiction measure is invalid}
+
+The same protocol applied to the contradiction heuristic gives
+$\kappa = -0.037$ (95\% CI $[-0.101, 0.000]$) on the 49 rows where the measure
+is defined --- agreement \emph{below} chance --- with \textbf{zero true
+positives} (0 TP, 41 TN, 7 FP, 1 FN). The apparently high raw agreement of
+83.7\% is an artefact of a shared negative majority and carries no information
+at this prevalence.
+
+The failure mechanism is unambiguous. The detector flags an answer when it
+contains a negation cue immediately followed by a term appearing on a diagnosis
+or laboratory line of the record. It never checks whether that negation is the
+\emph{record's own wording}. ICD-10 descriptions embed negation routinely, and
+every one of the seven false positives was triggered this way: \emph{without
+myelopathy}, \emph{without complications}, \emph{without hematuria},
+\emph{without lesion}, \emph{not carried}. An answer that correctly reproduces
+the patient's coded diagnosis is scored as contradicting it. Across the 2{,}025
+rows not annotated, 172 of the detector's 179 positives (96\%) fall on the two
+question types whose gold answer is a verbatim diagnosis string, confirming the
+mechanism is systematic rather than incidental.
+
+We therefore withdraw the EHR-contradiction column and the associated claim of
+parity between systems. It compared quantities that do not measure
+contradiction.
+
+\subsection{A repaired detector, and the limits of repair}
+
+The premise of the heuristic --- the record asserts $X$, the answer denies $X$
+--- is sound; only the second half was ever tested. We repair it by firing only
+when the record \emph{positively asserts} the term, so that a term negated
+everywhere it appears in the record cannot be contradicted. We additionally
+restrict candidate terms to the value side of structured fields and match on
+word boundaries. Because the repaired measure detects only negated assertions,
+we rename it the \textbf{negation-contradiction rate}.
+
+Its scope is strictly narrower than the original name implied. It captures
+\emph{Type~1} errors, where the answer negates something the record asserts. It
+cannot capture \emph{Type~2} errors, where the answer asserts something the
+record refutes: the single human-flagged contradiction the original detector
+missed was of this kind, containing no negation at all. Detecting Type~2
+requires clinical reasoning over the record and is out of scope for any lexical
+method.
+
+We validated the repair on samples \emph{disjoint} from those that exposed the
+defect, since a fix designed in view of particular failures cannot be tested on
+them. Table~\ref{tab:detector-validation} reports both rounds. Each carried
+constructed contradictions as attention checks, excluded from all statistics;
+these were included because a working repair implies a near-uniform negative
+response set, which is otherwise indistinguishable from inattentive labelling.
+All attention checks were caught in both rounds.
+
+\begin{table}[t]
+\centering
+\caption{Original versus repaired detector, evaluated on samples disjoint from
+those that exposed the defect. Attention checks excluded.}
+\label{tab:detector-validation}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llccccc}
+\toprule
+Question type & Detector & TP & FP & FN & Prec. & Rec. \\
+\midrule
+diagnosis      & original  & 0  & 20 & 0 & 0.00 & --- \\
+$(n=30)$       & repaired  & 0  & \textbf{0}  & 0 & --- & --- \\
+\midrule
+monitoring     & original  & 3  & 0  & 9 & 1.00 & 0.25 \\
+$(n=20)$       & repaired  & 11 & 4  & 1 & 0.73 & \textbf{0.92} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On diagnosis questions the repair is unambiguous: all 20 false positives are
+eliminated and none introduced, a paired McNemar test giving $p = 2.0\times
+10^{-6}$. On monitoring questions it \emph{fails} its pre-registered acceptance
+bar. We required precision $\geq 0.80$; the observed precision is 0.733 (95\%
+CI $[0.449, 0.922]$), short by a single row. We report the failure rather than
+relax the bar.
+
+The residual false positives are a single artefact, not four independent ones:
+all four arise from the same short template answer, \emph{``No abnormal labs
+available''}, in which the negated token \emph{abnormal} is a generic clinical
+qualifier rather than a finding, yet appears on a laboratory line of the record.
+The correction is evident, but deriving it from these four observations and
+validating it on them would repeat the circularity this protocol exists to
+avoid, so we leave it as a stated limitation.
+
+\subsection{The headline result: contradiction concentrates where the metric
+could not see it}
+
+The comparison on monitoring questions inverts the expected story. There the
+original detector was not over-flagging at all --- it was \emph{missing} nine of
+twelve genuine contradictions, at a recall of 0.25. The repaired detector
+recovers eleven of twelve. Of the twelve rows it newly flags, eight are
+confirmed genuine.
+
+The original heuristic therefore fails in \emph{both} directions: it
+over-flags on diagnosis questions, where the answer copies coded text
+containing negation, and under-detects on monitoring questions, where genuine
+contradictions are phrased in ways adjacency matching cannot reach. The
+consequence for our results is directional and should be stated plainly: the
+contradiction rates reported in Section~\ref{sec:results} are \emph{too low},
+not merely noisy.
+
+The concentration is striking. Human annotation confirms twelve genuine
+contradictions among twenty monitoring-question rows, against \textbf{zero
+among thirty} diagnosis-question rows. Contradiction in this system is not
+distributed across question types; it is localised in precisely the type whose
+answers are guideline panels rather than record fields --- and it is the type
+the original metric was structurally least able to detect. We regard this as
+the substantive finding of the validation, and a stronger one than any repaired
+rate: an evaluation that reported near-zero contradiction across all systems was
+measuring the absence of a lexical pattern, not the absence of contradiction.
+
+\subsection{A measurement caveat for mode-conditional metrics}
+
+One further hazard applies to any per-system rate computed over this measure.
+Contradiction is undefined for text-only retrieval, which receives no record to
+contradict, so those rows are excluded rather than scored as zero. For systems
+that \emph{choose} when to enter that mode, the exclusion is not neutral: on
+our data roughly 90\% of all contradictions fall in the quarter of questions
+the router sends to text-only retrieval (16 of 18 under $T{+}E$, Fisher
+$p = 4.9\times10^{-9}$; 13 of 14 under $T{+}E{+}K$, $p = 6.0\times10^{-8}$).
+Computed naively this manufactures a tenfold apparent advantage for the router.
+On a matched question set the router and always-on hybrid are indistinguishable.
+Any rate reported over a mode-conditional metric must therefore be computed on
+a common set of questions, a requirement we did not appreciate in our original
+analysis.
+
+\subsection{Summary}
+
+Of our two hallucination measures, one is validated
+($\kappa = 0.749$) and one is withdrawn ($\kappa = -0.037$, zero true
+positives). The repaired replacement is validated for diagnosis questions and
+only partially for monitoring questions, and measures a strictly narrower
+phenomenon than its predecessor claimed to. We report this in full because the
+negative result is the more useful one: lexical hallucination heuristics of this
+family can be wrong in both directions at once, and neither failure is visible
+without human adjudication.
