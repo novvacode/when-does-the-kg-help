@@ -101,6 +101,34 @@ training and routing data. Full analysis in [RESEARCH_LOG.md](RESEARCH_LOG.md).
 ¹ EHR-contradiction is **not measurable** for mode T: the detector scans the
 EHR snapshot, which mode T does not receive. It is not 0% — it is undefined.
 
+> ### ⚠ The EHR-contradiction column is retired
+>
+> A 75-row human annotation study (2026-08-16) found this detector had
+> **Cohen's κ = −0.0370 with zero true positives** (0 TP / 41 TN / 7 FP / 1 FN).
+> Every false positive was triggered by negation embedded in the ICD
+> description itself — "Spondylosis **without** myelopathy", "Type 2 diabetes
+> **without** complications" — so an answer correctly copying the patient's
+> diagnosis was scored as contradicting it. The column above measures ICD
+> naming convention, not hallucination.
+>
+> A corrected scorer (`src/evaluation/fix_ehr_contradiction.py`) fires only when
+> the EHR *positively asserts* the negated term. It was validated on 30 rows
+> disjoint from those that exposed the bug: **20 false positives → 0**, none
+> introduced, paired McNemar *p* = 2.0e-06.
+>
+> The replacement metric is the **negation-contradiction rate**, and it measures
+> less than the old name implies: only *Type 1* (the answer negates what the EHR
+> asserts). *Type 2* (the answer asserts what the record refutes) requires
+> clinical reasoning and is **out of scope** for any string heuristic.
+>
+> Two things must be true of any number reported from it. It must be computed on
+> a **matched question set** — the mode-T `n/a` rule silently drops rows, and
+> ~90% of contradictions live exactly in the rows the router sends to T, which
+> manufactures a spurious 10× router advantage (on matched questions Router and
+> T+E+K are **tied at 0.0044**). And validation is currently complete only for
+> `diagnoses`/`primary_diagnosis`; the `monitoring_labs` population is still
+> under review. See [RESEARCH_LOG.md](RESEARCH_LOG.md), 2026-08-16.
+
 ### H1 — partially supported (2 of 3 pre-registered criteria)
 
 - ✅ **Quality parity with always-on hybrid.** Router vs T+E+K is
@@ -137,6 +165,22 @@ one: on this benchmark the optimal retrieval mode is predictable from the
 question, and patient state adds no measurable routing signal. It still
 beats an exact-match question lookup (0.92 vs 0.82) because embeddings
 generalise to unseen question phrasings, where the lookup scores 0.00.
+
+**But "contributes nothing" means no *performance* gain — not that the router
+ignores patient state.** SHAP attribution over the deployed 389-dim vector
+(`src/evaluation/router_shap.py`, gated to reproduce the deployed decisions
+exactly: 300/300 mode agreement) shows the patient block carries **8.8% of
+total attribution mass**, and per feature the 5 structural features are
+**7.4× the average BGE dimension** — `n_labs` ranks **#5 of 389** and is
+nonzero on all 300 held-out rows. `n_meds` is exactly 0.0, confirming it as a
+dead feature.
+
+These are different measurements and they do not agree here: the router
+demonstrably consults patient state, and consulting it does not improve
+routing. The defensible claim is **question-driven, with performance-neutral
+use of patient state**. SHAP's rankings are causal for this model —
+ablating its top-k features drops the predicted-class probability with
+**0.90 directional agreement** and an AOPC **26× a random-k control**.
 
 ### Where the latency saving comes from
 
@@ -530,6 +574,26 @@ python -m src.evaluation.router_ablation     # question-only vs patient-only vs 
 python -m src.evaluation.recompute_grounding # length-controlled grounding measure
 ```
 
+### Journal-extension analyses (JBI)
+
+CPU-only; none of these retrain the router or the generator.
+
+```bash
+python -m src.evaluation.router_shap             # SHAP attribution + faithfulness test
+python -m src.evaluation.fix_ehr_contradiction   # corrected scorer: synthetic control suite
+```
+
+These need Neo4j running (retrieval only, no LLM). In PowerShell set the
+password with **single** quotes — double quotes expand `$`:
+
+```bash
+python -m src.evaluation.build_annotation_sample     # 75-row human annotation sample
+python -m src.evaluation.annotation_agreement        # kappa, confusion, McNemar
+python -m src.evaluation.build_validation_sample     # round 2: fix validation, unseen rows
+python -m src.evaluation.validation_agreement        # paired original-vs-corrected test
+python -m src.evaluation.recompute_contradiction     # corrected metric over all 2100 rows
+```
+
 ### A note on reproducibility and this project's history
 
 [RESEARCH_LOG.md](RESEARCH_LOG.md) is the complete, unedited record of this
@@ -552,10 +616,23 @@ Stated plainly, because they bound what these results support:
   model, one dataset. The high-sparsity subgroup has only 30 questions.
 - **The knowledge graph is small** — 25 diseases, 215 hand-curated guideline
   edges — not extracted from a standard biomedical ontology.
-- **Hallucination measures are automatic heuristics**, not clinician-adjudicated.
-  There is no human evaluation and no inter-annotator agreement study.
+- **Hallucination measures are automatic heuristics.** One has now been validated
+  against human judgement and one has been retired and rebuilt:
+  `unsupported_rate` reaches **Cohen's κ = 0.7486** [0.5816, 0.8901] against a
+  human annotator on 75 held-out rows, with no directional skew (McNemar
+  *p* = 1.0). `ehr_contradiction` scored **κ = −0.0370 with zero true
+  positives** and has been replaced (see the boxed note above).
+- **This is human-vs-detector agreement, not inter-annotator agreement.** There is
+  one annotator, who is the project author — blind to system identity and to the
+  detector's labels, but not to the project's hypotheses. The two-annotator
+  κ ≥ 0.6 study described in the design doc has **not** been done.
 - **EHR-contradiction is not measurable for mode T**: the detector inspects an EHR
-  snapshot that mode T never receives, so it is reported as `n/a`, not 0%.
+  snapshot that mode T never receives, so it is reported as `n/a`, not 0%. The
+  same rule creates a **selection effect** for any system that chooses when to
+  enter mode T, so per-system rates must be computed on a matched question set.
+- **Type-2 contradictions are not measured at all.** An answer that asserts
+  something the record refutes (rather than negating something it asserts)
+  requires clinical reasoning to detect and is out of scope.
 
 ---
 

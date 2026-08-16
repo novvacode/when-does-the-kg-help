@@ -1,7 +1,13 @@
 # SESSION STATE — Handoff Document
 
-**Last updated:** 2026-08-12 · **Repo:** https://github.com/novvacode/when-does-the-kg-help
-**HEAD:** `f37630d` · working tree clean, pushed, in sync with `origin/main`
+**Last updated:** 2026-08-17 · **Repo:** https://github.com/novvacode/when-does-the-kg-help
+**HEAD:** `4e3bfb2` · **4 commits AHEAD of `origin/main` — NOT pushed.**
+
+> **Phase change:** the conference paper is complete. Work since 2026-08-13 is a
+> **journal extension targeting the Journal of Biomedical Informatics (JBI)**:
+> SHAP explainability, a human hallucination-annotation study, and a repaired
+> EHR-contradiction detector. The conference-era items in §6 (compile, author
+> block, references) are still open and unchanged.
 
 > **Read this first, then [RESEARCH_LOG.md](RESEARCH_LOG.md) if you need the *why*.**
 > This file is the operational state. RESEARCH_LOG.md is the full chronological
@@ -82,6 +88,17 @@ Full pipeline runs end-to-end and the paper is drafted.
 | Paper | drafted | `paper/main.tex`, IEEEtran, 18 refs |
 | GitHub release | done | repo hardened, patient data excluded |
 
+### Journal extension (2026-08-13 → 2026-08-17)
+
+| Stage | Status | Key output |
+|---|---|---|
+| SHAP explainability | done | `src/evaluation/router_shap.py`; both tiers gated (probs match 2.97e-08; modes 300/300) |
+| Human annotation study | done | 75 rows × 7 systems; `unsupported_rate` κ=0.7486, `ehr_contradiction` κ=−0.0370 |
+| EHR-contradiction fix | done, validated | `src/evaluation/fix_ehr_contradiction.py`; FP 20→0 on unseen rows, McNemar p=2.0e-06 |
+| Full recompute | done | 2100 rows, 186→46 flags; **two reporting caveats, see §9** |
+| Round-3 validation | **IN PROGRESS** | `monitoring_labs` positives; the 33 new detections are still unvalidated |
+| `requirements.txt` | added | never existed despite README referencing it |
+
 ### Headline results (all verified against artifacts)
 
 | System | BLEU | ROUGE-L | BERTScore | Latency (ms) |
@@ -158,8 +175,21 @@ neither duckdb nor pyarrow — **always use the ehr-rag interpreter.**
    RAG (Lewis), SBERT, Self-RAG, QLoRA, LoRA, XGBoost, BLEU, ROUGE, BERTScore.
 
 **Security:**
-4. **Change the Neo4j password.** `medrag123` is still in public git history from commit
-   `9d83e1a`. The source no longer contains it, but history does.
+4. **Change the Neo4j password — ESCALATED.** `medrag123` is in public git history from
+   commit `9d83e1a`, and was additionally exposed in plaintext in a 2026-08-16 working
+   session. Rotate it before the next push.
+
+**Journal extension (JBI):**
+5. **Finish round-3 validation** of the corrected scorer on `monitoring_labs`
+   (`src/evaluation/build_validation_sample_v3.py` → `validation_agreement_v3`).
+   Until it passes, **40 of the 46 recomputed flags are unvalidated** and the recomputed
+   rate must not enter the paper.
+6. **Replace the paper's EHR-contradiction column** with the paired
+   negation-contradiction numbers (§9), under the new name, with Type 2 scoped out.
+7. **Swap the scorer into `run_evaluation.py`.** It still holds the ORIGINAL function on
+   purpose, so the conference paper's numbers stay reproducible from committed code.
+   Do this only after item 6 is settled.
+8. **Push the 4 unpushed commits** (after item 4).
 
 **Optional (venue-dependent):**
 5. Abstract is ~268 words; some IEEE venues cap at 250.
@@ -230,20 +260,65 @@ EHR-contradiction **undefined** for mode T (reported `n/a`, never 0%).
   disproved that. Do not let this framing drift back.
 - Mode T's EHR-contradiction is **`n/a`**, never 0.0000.
 
+**Standing corrections added by the journal extension — do not let these drift:**
+
+- **Attribution ≠ performance contribution.** Table VI (ablation) says patient features
+  add no *accuracy*; SHAP says they carry ~9% of attribution mass and `n_labs` ranks
+  **#5 of 389**, nonzero on 300/300 rows. Both are true. Correct phrasing:
+  **"question-driven, with performance-neutral use of patient state."** Wrong:
+  "the router ignores patient state." See RESEARCH_LOG 2026-08-13.
+- **The metric is `negation-contradiction rate`, not "EHR-contradiction".** It measures
+  Type 1 only (answer negates what the EHR asserts). Type 2 (answer asserts what the
+  record refutes) needs clinical reasoning and is **out of scope** — the one
+  human-flagged miss, row A065, was Type 2. Do not let the repaired metric reclaim the
+  broader name.
+- **The n/a rule creates a SELECTION EFFECT.** Any system that chooses when to enter
+  mode T has those rows dropped, and ~90% of contradictions live exactly there
+  (T+E: 16/18 flags on the 74 Router-routed-to-T questions, Fisher p=4.9e-09). The
+  unpaired per-system table shows a spurious 10× Router win; on matched questions
+  **Router and T+E+K are tied at 0.0044**. Per-system rates on a mode-conditional
+  metric MUST use a matched question set.
+- **The `unsupported ≥ 0.5` threshold is pre-registered and locked** (2026-08-13, before
+  annotation). κ peaks at 0.4 in the sweep; **do not retune** — that fits the metric to
+  the reference standard judging it. The sweep is robustness only.
+- **Never validate a fix on the rows that exposed the bug.** Rounds 2 and 3 draw
+  samples disjoint from all prior annotation, enforced on `q_idx|system`.
+- **Annotation samples carry attention checks.** When a working fix implies a uniform
+  "no" response set, constructed contradictions are the only thing separating a real
+  result from an inattentive one. They are excluded from all statistics.
+
 **Workflow constraints:**
 - GPU-heavy steps are run by the user, not the agent.
 - Before any long GPU run: **archive `models/medgemma-4b-qlora/`** or `get_last_checkpoint()`
   will silently resume the old model. This nearly cost 13 h once.
 - Use `C:\Users\jangi\anaconda3\envs\ehr-rag\python.exe`, not system Python.
 - Write edit scripts to files; **do not pipe LaTeX/regex through bash heredocs.**
+- **Neo4j steps need `NEO4J_PASSWORD` set, in SINGLE quotes in PowerShell**
+  (`$env:NEO4J_PASSWORD='...'`) — double quotes expand `$` and silently corrupt it.
+  A failed auth does NOT stop retrieval: `Retriever` swallows KG errors and returns
+  contexts with no KG facts, which once produced a corrupt annotation sample that
+  reported "0 failures". Scripts now run a real Cypher preflight; keep it that way.
+- **`run_evaluation.py` deliberately still contains the ORIGINAL (broken) contradiction
+  scorer**, so the conference paper's numbers stay reproducible from committed code.
+  The corrected one lives in `src/evaluation/fix_ehr_contradiction.py`. Do not "tidy"
+  this without doing §6 item 6 first.
 
 ---
 
 ## 10. Exact next step
 
-The research is complete. Remaining work is publication mechanics.
+**Journal extension (current work):**
 
-**Step 1 — compile the paper (do this first; it is the only unverified item):**
+1. **Finish round 3.** Build (`build_validation_sample_v3.py`, needs Neo4j), annotate
+   `experiments/results/annotation_v3/annotate_v3.html` (23 rows, ~10 min), then score
+   it. Pre-registered: validated if ≥ 12/15 stratum-A rows are confirmed genuine.
+2. **Then** replace the paper's contradiction column with the paired numbers under the
+   name `negation-contradiction rate`, Type 2 out of scope.
+3. Rotate the Neo4j password, then push the 4 unpushed commits.
+
+**Conference-paper mechanics (unchanged, still open):**
+
+**Step 1 — compile the paper (still never done; the only unverified item):**
 
 Upload `paper/main.tex` and the `paper/plots/` folder to Overleaf, set compiler to
 pdfLaTeX, and compile. Then:
@@ -258,7 +333,7 @@ offending `tabular`, or promoting it to `table*`.
 
 **Step 3 — verify the 9 unchecked references** (listed in §6.3).
 
-**Step 4 — change the Neo4j password** (it is in public git history).
+**Step 4 — change the Neo4j password** (in public git history, and re-exposed 2026-08-16).
 
 Nothing requires re-running the GPU pipeline. If a fresh run ever becomes necessary,
 the command order is in README "Running the Pipeline" — and archive the existing
