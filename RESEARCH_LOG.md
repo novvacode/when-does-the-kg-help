@@ -7,6 +7,106 @@ without needing to read commit-by-commit diffs.
 
 ---
 
+## 2026-08-16 (later still) — Corrected metric recomputed over all 2,100 rows.
+## Two findings that change how it must be reported.
+
+`python -m src.evaluation.recompute_contradiction`, 900 contexts rebuilt,
+retrieval only, no GPU.
+
+**Reproduction check: 0/2100 label flips** between the stored column and the
+original scorer recomputed on rebuilt contexts. The rebuild reproduces eval
+time exactly, so every number below is comparable to the paper's.
+
+Effect of the fix on 1,462 scorable (mode ≠ T) rows:
+
+| | flags |
+|---|---|
+| original scorer | 186 |
+| **corrected scorer** | **46** |
+| suppressed (v1 yes → v2 no) | 173 |
+| **newly caught** (v1 no → v2 yes) | **33** |
+
+Confirms the corrected scorer is not a subset: it removes 173 artifacts and
+adds 33 detections the original's punctuation bug had hidden.
+
+### FINDING 1 — the per-system table is CONFOUNDED. Do not report it as printed.
+
+The raw output looks like a large Router win:
+
+| system | n scorable | n/a (mode T) | rate (budgeted) |
+|---|---|---|---|
+| Router | 226 | 74 | 0.0044 |
+| T+E+K | 300 | 0 | 0.0467 |
+| T+E | 300 | 0 | 0.0600 |
+
+**This is a selection artifact, not a result.** Rates are computed over
+different question subsets: any system that routes to T has those rows dropped
+as n/a, and the dropped rows are exactly where contradictions live.
+
+| under | flags on the 74 questions Router sends to T | flags on the 226 it keeps | Fisher |
+|---|---|---|---|
+| T+E | **16 of 18** (rate 0.2162) | 2 (rate 0.0088) | p = 4.9e-09 |
+| T+E+K | **13 of 14** (rate 0.1757) | 1 (rate 0.0044) | p = 6.0e-08 |
+
+~90% of all contradictions sit in the 25% of questions the Router routes to T,
+where the metric is **undefined rather than zero**. The Router does not avoid
+contradictions; it routes them into unmeasurability.
+
+Paired comparison on the 226 questions where Router is scorable — the honest
+version:
+
+| system | flagged | rate |
+|---|---|---|
+| Router | 1 | 0.0044 |
+| **T+E+K** | **1** | **0.0044** |
+| T+E | 2 | 0.0088 |
+| Oracle | 1 | 0.0046 |
+| StaticQType | 1 | 0.0049 |
+
+**Router and T+E+K are tied.** The paper's original "EHR-contradiction is
+effectively tied" conclusion survives — but for an entirely different reason,
+on a metric that now works. Report the paired numbers; the unpaired table is
+not interpretable.
+
+**Generalised rule to carry forward:** the mode-T `n/a` rule creates a
+SELECTION EFFECT for any system that chooses when to enter mode T. This is the
+same defect family as reporting T's contradiction rate as 0.0000 (2026-08-15),
+one level up: there the undefined value was mistaken for zero, here the
+undefined *rows* silently change the denominator. Any per-system rate over a
+mode-conditional metric must be computed on a matched question set.
+
+Sanity check passed: Router rows are byte-identical to their base-mode system
+on the same question (174 T+E rows, 52 T+E+K rows, exact match), so the
+pipeline is consistent and the effect is genuinely distributional.
+
+### FINDING 2 — 87% of the remaining flags are on question types never validated
+
+| question type | v2 flags | validated by the human study? |
+|---|---|---|
+| monitoring_labs | 36 | **no** |
+| lab | 4 | **no** |
+| primary_diagnosis | 6 | yes |
+
+**40 of 46 flags — and all 33 newly-caught rows — are `monitoring_labs`/`lab`.**
+The 2026-08-16 validation covered `diagnoses`/`primary_diagnosis`, because that
+is where the bug lived. It established that the fix eliminates false positives
+there (20 → 0). It says **nothing** about whether the 33 new `monitoring_labs`
+detections are genuine.
+
+So the corrected metric's positive rate is driven almost entirely by an
+unvalidated population. **Do not put the recomputed rate in the paper without a
+third annotation round targeting `monitoring_labs`** (same design: fresh rows,
+disjoint from both prior samples, blind, pre-registered). The validated claim
+today is narrower than the recomputed table implies: *the fix removes the ICD
+artifact on diagnosis questions*, not *the corrected rate is trustworthy
+everywhere*.
+
+Artifacts: `negation_contradiction_by_system.csv` ·
+`negation_contradiction_per_question.csv` ·
+`negation_contradiction_metadata.json`.
+
+---
+
 ## 2026-08-16 (later) — EHR-contradiction detector FIXED and validated on unseen data
 
 Repairs the defect found earlier the same day. The corrected scorer lives in
