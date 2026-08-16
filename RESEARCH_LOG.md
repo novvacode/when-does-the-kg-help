@@ -7,6 +7,108 @@ without needing to read commit-by-commit diffs.
 
 ---
 
+## 2026-08-16 (later) — EHR-contradiction detector FIXED and validated on unseen data
+
+Repairs the defect found earlier the same day. The corrected scorer lives in
+`src/evaluation/fix_ehr_contradiction.py`; `run_evaluation.py` is deliberately
+**unchanged** so the paper's existing numbers stay reproducible from committed
+code until the metric is formally replaced.
+
+### The fix
+
+The original asked "does the answer contain `<negation> X` for some X on a
+diagnosis/lab line?" and never checked whether that negation was **the
+record's own wording**. The corrected scorer fires only when the EHR
+**positively asserts** the term — if every EHR mention of X is itself negated,
+there is nothing to contradict. Plus two mechanical tightenings: candidate
+terms come from the value side of `Diagnoses: ...`, and matching is
+word-boundary rather than substring.
+
+Deliberately **not** done: no stopword list built from the 7 observed triggers.
+That would fit the fix to the rows that exposed the bug.
+
+### A second, independent bug found while building the control suite
+
+The original attaches punctuation to terms (`line.split()` yields
+`"pneumonia,"`), so for an EHR listing "Pneumonia, organism unspecified" it
+searched for the literal `"no pneumonia,"` and went **silent** on an answer
+saying "No pneumonia." — a genuine contradiction. Same class as the
+2026-08-13 KG matcher punctuation bug. Consequence: **the corrected scorer is
+NOT a strict subset of the original.** It removes artifact positives *and*
+adds genuine ones. Do not assume the recomputed rate can only fall.
+
+### Validation — deliberately NOT on the rows that found the bug
+
+The 75 annotated rows exposed the defect, so reusing them would be circular.
+A disjoint sample was drawn from the 2,025 rows never annotated:
+
+| stratum | n | drawn from |
+|---|---|---|
+| A — originally flagged | 20 | unseen `diagnoses`/`primary_diagnosis` the original flags |
+| B — control | 10 | unseen rows the original does not flag, same question types |
+| attention checks | 3 | real contexts, answer perturbed into a genuine contradiction |
+
+Overlap with session 1: **0**, enforced on `q_idx|system`. All rows mode ≠ T.
+
+| detector | TP | TN | **FP** | FN | accuracy |
+|---|---|---|---|---|---|
+| original | 0 | 10 | **20** | 0 | 0.3333 |
+| **corrected** | 0 | **30** | **0** | 0 | **1.0000** |
+
+**All 20 false positives eliminated, none introduced, none missed.** Paired
+McNemar: original-only-correct 0, corrected-only-correct 20, **p = 2.0e-06**.
+Stratum-A corrected FP rate 0/20, 95% CI [0.0000, 0.1684].
+
+κ is *not* the headline here: the sample is enriched for originally-flagged
+rows, so its prevalence is not the eval set's and κ is unstable at near-zero
+positives. The paired McNemar is the correct test.
+
+**The attention checks are what make this falsifiable.** If the fix works the
+expected result is 30 consecutive "no" answers — indistinguishable from an
+annotator who stopped reading. The annotator caught **3/3** constructed
+contradictions (and the corrected scorer flagged 3/3), so the uniform "no"
+reflects the data. Without them this result would prove nothing. They are
+excluded from every statistic.
+
+Synthetic control suite: **11/11 pass**, including three regression cases where
+the original fires and the corrected is silent, and one where the original is
+silent and the corrected correctly fires.
+
+### SCOPE — the metric must be renamed
+
+Two contradiction types exist:
+
+- **Type 1** — answer negates what the EHR asserts. Lexically detectable.
+  This is what the corrected scorer measures, correctly.
+- **Type 2** — answer asserts what the EHR refutes. Requires clinical
+  reasoning. **Not detectable by any string heuristic and not measured.**
+
+The one human-flagged contradiction the old detector missed (row A065,
+*"Decreased urine output, Anemia, Fatigue."*) is Type 2 — it contains no
+negation at all.
+
+So the repaired metric is **correct but narrower than the name implies**. It
+must be reported as **negation-contradiction rate**, with Type 2 explicitly
+out of scope. Do not let it quietly reclaim the broader "EHR-contradiction"
+label — that would claim coverage the method does not have. (Project owner's
+explicit decision, 2026-08-16.)
+
+### Still to do
+
+Recompute the corrected metric across all 2,100 rows and replace the paper
+column. This needs **no GPU and no regeneration** — answers are stored and
+context rebuild reproduces eval time exactly (0 drift, proven 2026-08-16) —
+roughly 900 unique contexts, retrieval only. Report both budgeted (what the
+model saw; what was validated) and unbudgeted (how the original column was
+computed) variants, since they are not interchangeable.
+
+Artifacts (gitignored): `experiments/results/annotation_v2/` —
+`validation_sample.csv` · `validation_filled.csv` · `validation_summary.csv` ·
+`validation_disagreements.csv` · `validation_results.json` ·
+`validation_metadata.json` · `annotate_v2.html`.
+
+---
+
 ## 2026-08-16 — Human annotation study: `unsupported_rate` validates, `ehr_contradiction` does NOT
 
 First human evaluation in this project. 75 rows from the 300-question held-out
