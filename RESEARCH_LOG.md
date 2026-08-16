@@ -7,6 +7,80 @@ without needing to read commit-by-commit diffs.
 
 ---
 
+## 2026-08-17 — Round 3: corrected scorer FAILS its pre-registered bar on
+## `monitoring_labs`, and the original metric was under-detecting all along
+
+23 rows (15 flagged + 5 control + 3 attention checks), `monitoring_labs`/`lab`
+only, disjoint from both prior annotation rounds. Attention checks **3/3**
+caught, so the labels are trustworthy.
+
+### The pre-registered criterion FAILS. The bar is not being moved.
+
+| | value |
+|---|---|
+| stratum A (flagged, n=15) | **11 genuine, 4 false positive** |
+| **precision** | **0.7333**, 95% CI [0.4490, 0.9221] |
+| recall | 0.9167 (11/12) |
+| pre-registered bar | ≥ 12/15 (precision ≥ 0.80) |
+| **result** | **NOT VALIDATED** — short by one row |
+
+Locked 2026-08-17 before annotation; it fails by a single row and stays failed.
+Round 2's diagnosis-question result (FP 20 → 0) is unaffected.
+
+### But the comparison against the original inverts the expected story
+
+Same 20 rows, original scorer: **TP 3 · FP 0 · FN 9** — precision 1.000,
+**recall 0.25**. Corrected: TP 11 · FP 4 · FN 1 — precision 0.733,
+**recall 0.917**.
+
+On this population the original was not over-flagging at all. It was **missing
+9 of 12 genuine contradictions**. The fix trades precision (1.00 → 0.73) for a
+large recall gain (0.25 → 0.92). Of the 12 rows newly caught by the fix, **8
+are genuine**.
+
+**This changes what the original metric's near-zero rates meant.** It
+over-flagged on `diagnoses`/`primary_diagnosis` (ICD-embedded negation, κ =
+−0.037, 0 TP) *and* under-detected on `monitoring_labs`. The paper's reported
+EHR-contradiction rates were not merely noisy — **the true contradiction rate
+is higher than reported**, not lower. `monitoring_labs` is where this generator
+actually contradicts the EHR: the human confirmed 12 genuine contradictions in
+20 rows of that type, versus **0 in 30** diagnosis rows in round 2.
+
+### All 4 false positives are ONE artifact
+
+Every one is the same 4-word template answer — *"No abnormal labs available"* —
+triggering on `no abnormal`, because "abnormal" (>5 chars) sits on an EHR lab
+line and is positively asserted there. So precision 0.733 reflects a single
+repeated answer template appearing 4 times, not four independent failure modes.
+
+**The fix is obvious and must NOT be written yet.** "abnormal" is a generic
+clinical qualifier, not a finding, so the rule would be to require the negated
+term to be a clinical entity rather than a qualifier. But that fix would be
+derived from these 4 observed rows, and validating it on them would be exactly
+the circularity rounds 2 and 3 exist to avoid. If implemented it needs a
+**fourth** fresh sample, disjoint from all three.
+
+### Consequences for the paper
+
+1. The `negation-contradiction rate` is validated for
+   `diagnoses`/`primary_diagnosis` (round 2) and **only partially** for
+   `monitoring_labs` (precision 0.73, CI [0.45, 0.92], n=15 — wide).
+2. Any reported rate must carry that split. Do not present a single validated
+   number across all question types.
+3. The stronger, better-supported claim is the **qualitative** one: the
+   original detector fails in *both* directions, and contradiction is
+   concentrated in `monitoring_labs` — a question type the conference paper's
+   metric was structurally blind to.
+4. One stratum-B row (W005, a `lab` question) is a genuine contradiction both
+   scorers miss — a reminder that recall is not 1.0 even after the fix.
+
+Artifacts: `experiments/results/annotation_v3/` — `validation_sample.csv` ·
+`validation_filled.csv` · `validation_v3_results.json` ·
+`validation_v3_disagreements.csv` · `validation_metadata.json` ·
+`annotate_v3.html`.
+
+---
+
 ## 2026-08-16 (later still) — Corrected metric recomputed over all 2,100 rows.
 ## Two findings that change how it must be reported.
 

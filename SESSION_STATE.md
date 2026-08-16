@@ -96,7 +96,7 @@ Full pipeline runs end-to-end and the paper is drafted.
 | Human annotation study | done | 75 rows × 7 systems; `unsupported_rate` κ=0.7486, `ehr_contradiction` κ=−0.0370 |
 | EHR-contradiction fix | done, validated | `src/evaluation/fix_ehr_contradiction.py`; FP 20→0 on unseen rows, McNemar p=2.0e-06 |
 | Full recompute | done | 2100 rows, 186→46 flags; **two reporting caveats, see §9** |
-| Round-3 validation | **IN PROGRESS** | `monitoring_labs` positives; the 33 new detections are still unvalidated |
+| Round-3 validation | done — **criterion FAILED** | `monitoring_labs` precision 0.7333 [0.4490, 0.9221], bar was ≥0.80. See §9. |
 | `requirements.txt` | added | never existed despite README referencing it |
 
 ### Headline results (all verified against artifacts)
@@ -180,12 +180,16 @@ neither duckdb nor pyarrow — **always use the ehr-rag interpreter.**
    session. Rotate it before the next push.
 
 **Journal extension (JBI):**
-5. **Finish round-3 validation** of the corrected scorer on `monitoring_labs`
-   (`src/evaluation/build_validation_sample_v3.py` → `validation_agreement_v3`).
-   Until it passes, **40 of the 46 recomputed flags are unvalidated** and the recomputed
-   rate must not enter the paper.
+5. **Decide how to report the split validation.** Round 3 failed its bar
+   (precision 0.7333 vs ≥0.80). Options, in order of preference:
+   (a) report the qualitative finding — the original metric fails in both directions,
+   contradiction concentrates in `monitoring_labs` — which is well supported and does
+   not depend on the failed bar; (b) report the rate per question type with round 2 /
+   round 3 validation status attached to each; (c) fix the `no abnormal` artifact and
+   run a **fourth** disjoint validation round. Do **not** report one pooled number.
 6. **Replace the paper's EHR-contradiction column** with the paired
-   negation-contradiction numbers (§9), under the new name, with Type 2 scoped out.
+   negation-contradiction numbers (§9), under the new name, with Type 2 scoped out and
+   the per-type validation status stated.
 7. **Swap the scorer into `run_evaluation.py`.** It still holds the ORIGINAL function on
    purpose, so the conference paper's numbers stay reproducible from committed code.
    Do this only after item 6 is settled.
@@ -286,6 +290,21 @@ EHR-contradiction **undefined** for mode T (reported `n/a`, never 0%).
 - **Annotation samples carry attention checks.** When a working fix implies a uniform
   "no" response set, constructed contradictions are the only thing separating a real
   result from an inattentive one. They are excluded from all statistics.
+- **The corrected scorer is validated for DIAGNOSIS questions only.** Round 2
+  (`diagnoses`/`primary_diagnosis`): FP 20 → 0, McNemar p=2.0e-06 ✅. Round 3
+  (`monitoring_labs`/`lab`): precision **0.7333** [0.4490, 0.9221] against a
+  pre-registered ≥0.80 bar — **FAILED by one row, and the bar was not moved**. Report
+  the split; never a single validated number across all question types.
+- **The original metric failed in BOTH directions.** It over-flagged on diagnosis
+  questions (κ=−0.037, 0 TP) *and* under-detected on `monitoring_labs` (recall 0.25 —
+  it missed 9 of 12 genuine contradictions). **The true contradiction rate is HIGHER
+  than the paper reports, not lower.** Contradiction concentrates in `monitoring_labs`
+  (12 genuine in 20 rows) versus `diagnoses` (0 in 30).
+- **The remaining artifact is known but must NOT be patched from the rows that found
+  it.** All 4 round-3 false positives are one template answer, *"No abnormal labs
+  available"*, triggering on `no abnormal` ("abnormal" is a generic qualifier, not a
+  finding). A fix is easy and would be circular to validate on those rows — it needs a
+  **fourth** fresh sample, disjoint from all three.
 
 **Workflow constraints:**
 - GPU-heavy steps are run by the user, not the agent.
