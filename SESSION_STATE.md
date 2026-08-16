@@ -1,7 +1,7 @@
 # SESSION STATE — Handoff Document
 
 **Last updated:** 2026-08-17 · **Repo:** https://github.com/novvacode/when-does-the-kg-help
-**HEAD:** `4e3bfb2` · **4 commits AHEAD of `origin/main` — NOT pushed.**
+**HEAD:** `00bddd9` · working tree clean, **pushed, in sync with `origin/main`**
 
 > **Phase change:** the conference paper is complete. Work since 2026-08-13 is a
 > **journal extension targeting the Journal of Biomedical Informatics (JBI)**:
@@ -175,9 +175,11 @@ neither duckdb nor pyarrow — **always use the ehr-rag interpreter.**
    RAG (Lewis), SBERT, Self-RAG, QLoRA, LoRA, XGBoost, BLEU, ROUGE, BERTScore.
 
 **Security:**
-4. **Change the Neo4j password — ESCALATED.** `medrag123` is in public git history from
-   commit `9d83e1a`, and was additionally exposed in plaintext in a 2026-08-16 working
-   session. Rotate it before the next push.
+4. **Change the Neo4j password — DEFERRED by the project owner (2026-08-17).**
+   `medrag123` is in public git history from commit `9d83e1a` and was re-exposed in a
+   working session. The owner reviewed this and chose not to rotate for now; pushing
+   adds no new exposure, since the string was already published in this file. It is a
+   local-only development database. Revisit before any deployment or credential reuse.
 
 **Journal extension (JBI):**
 5. **Decide how to report the split validation.** Round 3 failed its bar
@@ -193,7 +195,14 @@ neither duckdb nor pyarrow — **always use the ehr-rag interpreter.**
 7. **Swap the scorer into `run_evaluation.py`.** It still holds the ORIGINAL function on
    purpose, so the conference paper's numbers stay reproducible from committed code.
    Do this only after item 6 is settled.
-8. **Push the 4 unpushed commits** (after item 4).
+8. **Compile `paper_journal/main.tex`.** Never compiled. Structural checks pass (braces
+   382/382, 29/29 refs, 18/18 cite↔bibitem, tables column-consistent, 0 control chars)
+   but those do not catch overfull boxes or float placement. Owner is compiling on
+   Overleaf.
+9. **Trim the abstract.** Now ~382 words against a typical 250 cap. Deliberately
+   deferred to the Step-6 journal reformatting, so it is not trimmed twice.
+10. **Draft the SHAP section** for `paper_journal/sections/`; results already exist in
+    `experiments/results/final_eval/shap_*`.
 
 **Optional (venue-dependent):**
 5. Abstract is ~268 words; some IEEE venues cap at 250.
