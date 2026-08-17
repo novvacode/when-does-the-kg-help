@@ -1,6 +1,15 @@
-\documentclass[conference]{IEEEtran}
-\IEEEoverridecommandlockouts
-\usepackage{cite}
+% Elsevier elsarticle, numerical citation style, per the Journal of Biomedical
+% Informatics Guide for Authors. Converted from IEEEtran (conference) --- see
+% the conversion commit for the full list of substitutions.
+%
+% NOTE ON THE BIBLIOGRAPHY: this manuscript carries a hand-written
+% `thebibliography` block, not BibTeX, so there was no \bibliographystyle to
+% swap from IEEEtran.bst to elsarticle-num.bst. elsarticle renders a manual
+% thebibliography as numbered citations, which is what JBI requires. Migrating
+% the 18 entries to a .bib file + elsarticle-num.bst is a separate task and is
+% deliberately NOT bundled into the class conversion.
+\documentclass[preprint,12pt]{elsarticle}
+
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{graphicx}
 \usepackage{booktabs}
@@ -8,21 +17,22 @@
 \usepackage{url}
 \graphicspath{{./plots/}}
 
+% elsarticle sets \journal for the preprint line.
+\journal{Journal of Biomedical Informatics}
+
 \begin{document}
+
+\begin{frontmatter}
 
 \title{When Does the Knowledge Graph Help?\\
 Question-Driven Retrieval Routing for EHR-Grounded Clinical Question Answering}
 
-\author{
-\IEEEauthorblockN{[AUTHOR NAME]}
-\IEEEauthorblockA{
-\textit{[AFFILIATION],}\\
-[UNIVERSITY], [CITY, COUNTRY]\\
-[EMAIL]
-}
-}
+\author[inst1]{[AUTHOR NAME]}
+\ead{[EMAIL]}
 
-\maketitle
+\affiliation[inst1]{organization={[AFFILIATION], [UNIVERSITY]},
+            city={[CITY]},
+            country={[COUNTRY]}}
 
 \begin{abstract}
 Hybrid clinical retrieval-augmented generation~(RAG) systems commonly
@@ -62,11 +72,14 @@ list that sparse records lack. Questions are template-generated; the
 system is a research prototype without clinical validation.
 \end{abstract}
 
-\begin{IEEEkeywords}
-adaptive retrieval, retrieval-augmented generation, knowledge graph,
-clinical question answering, electronic health records, MIMIC-IV,
-QLoRA, parameter-efficient fine-tuning, EHR sparsity, consumer GPU
-\end{IEEEkeywords}
+\begin{keyword}
+adaptive retrieval \sep retrieval-augmented generation \sep
+knowledge graph \sep clinical question answering \sep
+electronic health records \sep MIMIC-IV \sep QLoRA \sep
+parameter-efficient fine-tuning \sep EHR sparsity \sep consumer GPU
+\end{keyword}
+
+\end{frontmatter}
 
 \section{Introduction}
 
@@ -434,7 +447,7 @@ does support in Section~\ref{sec:halluc-validation}. The
 unsupported-claim rate is retained: it reaches $\kappa = 0.749$ against
 human judgement on the same protocol.
 
-\begin{table*}[t]
+\begin{table}[t]
 \centering
 \small
 \setlength{\tabcolsep}{5pt}
@@ -453,11 +466,11 @@ StaticQType                  & 0.7338 & 0.8392 & 0.9634 & 0.2696 & 3790.0 & 2101
 Oracle (upper bound)         & 0.7497 & 0.8727 & 0.9708 & 0.2552 & 3961.7 & 2119 & 1.66 \\
 \bottomrule
 \end{tabular}
-\end{table*}
+\end{table}
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{summary_metrics.png}
+\includegraphics[width=0.78\linewidth]{summary_metrics.png}
 \caption{Text-quality metrics across the seven evaluated systems ($n{=}300$).}
 \label{fig:summary}
 \end{figure}
@@ -666,14 +679,14 @@ estimated.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{sparsity_heatmap_bertscore_f1.png}
+\includegraphics[width=0.78\linewidth]{sparsity_heatmap_bertscore_f1.png}
 \caption{BERTScore~F1 by system and EHR sparsity bucket. The T+E+K advantage over T+E shrinks as sparsity increases.}
 \label{fig:sparsity}
 \end{figure}
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{router_mode_distribution.png}
+\includegraphics[width=0.78\linewidth]{router_mode_distribution.png}
 \caption{Router mode selection overall and by EHR sparsity bucket.}
 \label{fig:routing}
 \end{figure}
