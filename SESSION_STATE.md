@@ -97,6 +97,7 @@ Full pipeline runs end-to-end and the paper is drafted.
 | EHR-contradiction fix | done, validated | `src/evaluation/fix_ehr_contradiction.py`; FP 20→0 on unseen rows, McNemar p=2.0e-06 |
 | Full recompute | done | 2100 rows, 186→46 flags; **two reporting caveats, see §9** |
 | Round-3 validation | done — **criterion FAILED** | `monitoring_labs` precision 0.7333 [0.4490, 0.9221], bar was ≥0.80. See §9. |
+| Step 4: KG-contradiction | done — **VALIDATED** | contraindication-violation detector, precision 1.0000 [0.9140, 1.0000]. KG cuts violations 7→0 vs T+E (p=0.0156), but is **not** better than plain T. See §9. |
 | `requirements.txt` | added | never existed despite README referencing it |
 
 ### Headline results (all verified against artifacts)
@@ -320,6 +321,25 @@ EHR-contradiction **undefined** for mode T (reported `n/a`, never 0%).
   available"*, triggering on `no abnormal` ("abnormal" is a generic qualifier, not a
   finding). A fix is easy and would be circular to validate on those rows — it needs a
   **fourth** fresh sample, disjoint from all three.
+- **The KG's safety benefit is CORRECTIVE, not additive.** Contraindication violations:
+  T 12 → T+E **18** → T+E+K 11. KG injection cuts violations 7→0 against T+E
+  (p=0.0156), but T+E+K is **not** significantly better than plain T (1 vs 0, p=1.0).
+  The EHR snapshot *causes* the harm (T→T+E, 0 vs 6, p=0.0312) and the KG undoes it.
+  Never write "KG injection reduces contraindication violations" without the "relative
+  to T+E" qualifier — unqualified it overclaims.
+- **This measures agreement with the KG's assertions, not clinical safety**, and covers
+  **one relation type of five** (`CONTRAINDICATED_WITH`). The other four are
+  structurally uncheckable — three are non-exhaustive `LIMIT 3` lists, and
+  `CO_OCCURS_WITH_LAB` is a frequency statistic no clinical claim can contradict.
+- **The KG linearisation flattens conditional prohibitions.** `get_subgraph_facts()`
+  renders "contraindicated if eGFR<30" as an unconditional "contraindicated in T2DM",
+  which is literally wrong — metformin is first-line for T2DM unless renal function is
+  poor. A defect worth reporting on its own, independent of any detector.
+- **Attention checks must be independently constructed and internally coherent.** The
+  first KG checks failed 0/3 because all three were one repeated answer string on an
+  incoherent question — a construction bug, not inattention. Rebuilt properly: 3/3.
+  A malformed check does not measure attention, and voiding good work on the strength
+  of one would have been the wrong call. Verify what a check *contains*.
 
 **Workflow constraints:**
 - GPU-heavy steps are run by the user, not the agent.

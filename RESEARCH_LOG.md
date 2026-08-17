@@ -7,6 +7,144 @@ without needing to read commit-by-commit diffs.
 
 ---
 
+## 2026-08-17 — KG-contradiction check (Step 4): the KG *repairs* harm the EHR
+## snapshot causes. First direct evidence that graph injection improves safety.
+
+Closes the Limitations gap "we do not implement a KG-contradiction measure".
+Detector: `src/evaluation/kg_contradiction.py`, frozen in commit `b282957`
+**before any held-out answer was read**.
+
+### Scope: one relation type of five, named for what it measures
+
+Only `CONTRAINDICATED_WITH` supports a well-posed check, so this is the
+**contraindication-violation rate**, not a "KG-contradiction rate". The others
+are out of scope structurally, not by oversight:
+
+| relation | why not |
+|---|---|
+| `FIRST_LINE_TREATMENT`, `HAS_SYMPTOM`, `INDICATES_LAB` | non-exhaustive lists retrieved with `LIMIT 3`; naming an item outside the list contradicts nothing, and omission carries no information |
+| `CO_OCCURS_WITH_LAB` | a MIMIC-IV frequency ("62% of admissions") — descriptive, not normative; no clinical claim can contradict it |
+
+`CONTRAINDICATED_WITH` is a universal prohibition, so one endorsing mention is
+a definite violation. It is also the only relation `retrieval.py` fetches
+without a `LIMIT`.
+
+**Violation** = the answer endorses a drug the KG marks contraindicated for
+**any** disease matched to this patient, not only the disease in the question.
+The T+E+K context supplies ground truth for **all three modes**, so T and T+E
+are judged against facts they never received — which is what makes the paired
+comparison a test of whether injecting the facts changes behaviour.
+
+### Development on a disjoint set caught a failure the schema would not predict
+
+Rules were written against the 24 candidate generations in the router splits,
+never the eval set. The dev set immediately produced
+**`"TSH, Lithium Levels."`** — a prohibited drug named inside a **lab test
+name**, endorsing nothing. That is the direct analogue of the ICD-embedded-
+negation bug that invalidated the EHR-contradiction detector, in a form no
+amount of schema reading would have surfaced. It is now an explicit exclusion
+with two control cases. Synthetic suite: **11/11**.
+
+### Validation: precision 1.0000
+
+61 real rows + 3 attention checks, stratified over the detector's own verdicts.
+
+| stratum | n | result |
+|---|---|---|
+| A — flagged violation | 41 | **41 genuine, 0 false positive** |
+| B — flagged compliant | 10 | 10 confirmed non-violations |
+| C — prohibition applies, detector silent | 10 | 9 confirmed silent, 1 disputed |
+
+**Precision 1.0000**, exact 95% CI [0.9140, 1.0000] — clears the pre-registered
+≥0.80 bar (41 flags ≥ the 5 required for a claim). **Zero abstains across all
+900 generations.** Recall 1.0000 scoping out the single disputed row, 0.9762
+counting it.
+
+`K026` is **unadjudicated**: the annotator judged an endorsement of
+Empagliflozin a violation, but that drug is absent from the patient's KG
+cautions (Metformin, Prednisone), so the detector follows the pre-registered
+definition and the human label appears to apply clinical knowledge from outside
+the graph. Recorded both ways rather than resolved unilaterally.
+
+### THE RESULT — the KG's benefit is corrective, not additive
+
+Paired McNemar over 300 questions, 212 engaging a prohibition:
+
+| mode | violations |
+|---|---|
+| T | 12 |
+| **T+E** | **18** |
+| **T+E+K** | **11** |
+
+| comparison | only first | only second | *p* |
+|---|---|---|---|
+| **T+E vs T+E+K** | **7** | **0** | **0.0156** |
+| **T vs T+E** | 0 | **6** | **0.0312** |
+| T vs T+E+K | 1 | 0 | 1.0000 |
+
+Two findings, and the second is the one that matters:
+
+1. **Injecting KG facts eliminates violations and introduces none** — 7 to 0
+   against T+E, p = 0.0156. This is the first direct evidence in the project
+   that the KG improves a safety outcome.
+2. **The EHR snapshot alone makes safety WORSE** — T+E violates on 6 questions
+   T does not, and none the other way (p = 0.0312). This independently
+   reproduces the 2026-08-11 observation that the snapshot leads the model to
+   affirm a drug it sees in the patient's medication list, now with a
+   statistical test rather than a single example.
+3. **T+E+K is NOT significantly better than plain T** (1 vs 0, p = 1.0). So the
+   KG does not add safety over text-only retrieval — **it undoes the damage the
+   EHR snapshot causes**. State it that way. "KG injection reduces
+   contraindication violations" is true only relative to T+E, and reporting it
+   without that qualifier would overclaim.
+
+This sharpens H2 rather than contradicting it: the KG's value here is repairing
+a specific failure mode introduced by structured EHR context, not general
+improvement.
+
+### Methodological finding: attention checks must be independently constructed
+
+The first three attention checks **failed 0/3 — and it was a construction bug,
+not inattention.** All three were the *same* answer string
+("Yes, Metformin is a standard first-line treatment for CKD Stage 3") pasted
+onto the question "What was the most likely main diagnosis?" — one check
+repeated three times on an incoherent pairing, produced by `head(3)` over rows
+that happened to share a patient and a caution. Answering "no" to a
+non-sequitur that recommends nothing to anyone is defensible.
+
+The annotator was demonstrably attentive on the real rows (41/41, 10/10,
+9-no/1-yes on the stratum where a rubber-stamp would have produced ten uniform
+"no"s), so the labels were kept and only the safeguard was rebuilt: three
+different patients, three different drugs, real caution lists, questions
+synthesised to be coherent with their answers. **Rebuilt checks: 3/3 caught.**
+
+Rule to carry forward: **an attention check must be independently constructed
+and internally coherent.** A malformed check does not measure attention, and
+applying a pre-registered void rule to it would have discarded good work on the
+strength of a bug. Verify what a check *contains*, not just that it exists —
+the second time this project has been saved by that.
+
+### Caveats
+
+1. **One relation type of five.** Not a general KG-faithfulness measure.
+2. **Conditional prohibitions.** Several cautions are conditional in their notes
+   ("contraindicated if eGFR<30"), but `get_subgraph_facts()` flattens them into
+   unconditional statements. Read literally the rendered fact can be wrong —
+   metformin *is* first-line for T2DM unless renal function is poor — so an
+   endorsement may be clinically correct while disagreeing with the fact as
+   given. **This is a defect in the KG's linearisation and is worth reporting
+   independently of this validation.**
+3. This measures **agreement with the KG's assertions, not clinical safety**.
+4. Violations are rare (11–18 per mode over 300 questions); the McNemar tests
+   rest on 6–7 discordant pairs.
+5. Single annotator, not inter-annotator agreement.
+
+Artifacts: `experiments/results/annotation_kg/` — `kg_verdicts_all.csv` (all 900
+generations) · `kg_sample.csv` · `kg_filled.csv` · `kg_checks_filled.csv` ·
+`kg_results.json` · `kg_metadata.json` · `annotate_kg.html`.
+
+---
+
 ## 2026-08-17 — Round 3: corrected scorer FAILS its pre-registered bar on
 ## `monitoring_labs`, and the original metric was under-detecting all along
 
