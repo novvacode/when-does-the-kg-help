@@ -337,7 +337,74 @@ def feature_ranking(sv: np.ndarray, top_n: int = 25) -> pd.DataFrame:
     pat = df[df["block"] == "patient"]
     out = pd.concat([keep, pat[~pat["feature"].isin(keep["feature"])]], ignore_index=True)
     out["mean_abs_shap"] = out["mean_abs_shap"].round(6)
-    return out.sort_values("rank").reset_index(drop=True)
+    out = out.sort_values("rank").reset_index(drop=True)
+    out.attrs["full"] = df          # all 389, for the publication figure
+    return out
+
+
+def plot_paper_figure(rank_full: pd.DataFrame, ga: pd.DataFrame,
+                      faith: pd.DataFrame, tier: str) -> str:
+    """
+    One figure carrying the whole result, replacing the six beeswarms.
+
+    The beeswarms are diagnostically fine but unusable in a paper: 17 of their
+    20 rows are BGE_Dim_N indices that mean nothing to a reader, they are 20
+    rows tall in portrait, and six of them say the same thing three times. More
+    importantly they do not show the actual finding, which is the DISAGREEMENT
+    between block-level and per-feature attribution.
+    """
+    fig, ax = plt.subplots(1, 3, figsize=(13, 3.6))
+    pooled = ga[ga["class"] == "POOLED"].iloc[0]
+
+    # (a) block shares
+    shares = [pooled["embedding_share"] * 100, pooled["patient_share"] * 100]
+    bars = ax[0].barh(["Question\nembedding\n(384 dims)", "Patient\nfeatures\n(5)"],
+                      shares, color=["#4c72b0", "#dd8452"], height=.55)
+    for b, s in zip(bars, shares):
+        ax[0].text(s + 1.5, b.get_y() + b.get_height() / 2, f"{s:.1f}%",
+                   va="center", fontsize=10)
+    ax[0].set_xlim(0, 108)
+    ax[0].set_xlabel("share of total mean |SHAP|")
+    ax[0].set_title("(a) By block", loc="left", fontsize=11)
+
+    # (b) per-feature: the same data, the opposite impression
+    emb = rank_full[rank_full.block == "embedding"].mean_abs_shap.to_numpy()
+    pat = rank_full[rank_full.block == "patient"].sort_values("mean_abs_shap",
+                                                              ascending=False)
+    ax[1].scatter(emb, np.random.default_rng(SEED).normal(0, .06, len(emb)),
+                  s=7, alpha=.35, color="#4c72b0", label=f"384 embedding dims")
+    ax[1].scatter(pat.mean_abs_shap, np.full(len(pat), 0.45), s=45,
+                  color="#dd8452", zorder=3, label="5 patient features")
+    for _, r in pat.iterrows():
+        if r.mean_abs_shap > 0:
+            ax[1].annotate(r.feature, (r.mean_abs_shap, 0.45), fontsize=7.5,
+                           rotation=32, ha="left", va="bottom")
+    ax[1].axvline(emb.mean(), ls="--", lw=1, color="#4c72b0")
+    ax[1].text(emb.mean(), -0.42, " mean embedding dim", fontsize=7.5,
+               color="#4c72b0", va="center")
+    ax[1].set_yticks([]); ax[1].set_ylim(-0.55, 0.85)
+    ax[1].set_xlabel("mean |SHAP| per feature")
+    ax[1].set_title("(b) By individual feature", loc="left", fontsize=11)
+    ax[1].legend(fontsize=8, loc="upper right", frameon=False)
+
+    # (c) faithfulness
+    f = faith[faith.tier == tier]
+    ax[2].plot(f.k, f.mean_prob_drop_top_k, "o-", color="#c44e52",
+               label="top-$k$ by SHAP")
+    ax[2].plot(f.k, f.mean_prob_drop_random_k, "s--", color="#8c8c8c",
+               label="random-$k$ control")
+    ax[2].set_xlabel("features ablated ($k$)")
+    ax[2].set_ylabel("drop in P(predicted mode)")
+    ax[2].set_title("(c) Faithfulness", loc="left", fontsize=11)
+    ax[2].legend(fontsize=8, frameon=False); ax[2].grid(alpha=.25)
+
+    for a in ax:
+        a.spines[["top", "right"]].set_visible(False)
+    plt.tight_layout()
+    path = FIG_DIR / f"shap_paper_figure_tier{tier}.png"
+    plt.savefig(path, dpi=300, bbox_inches="tight")
+    plt.close()
+    return str(path)
 
 
 def per_decision_table(sv, X, meta, clf, le, n_sample: int, top_n: int = 20) -> pd.DataFrame:
@@ -552,7 +619,12 @@ def run_tier(tier: str, clf, le, pipe, X_train_mean: np.ndarray) -> dict:
     print(faith_summary.drop(columns=["tier"]).to_string(index=False))
 
     FIG_DIR.mkdir(parents=True, exist_ok=True)
-    figs = plot_beeswarm(sv, X, classes, tier) + [plot_faithfulness(faith, tier)]
+    rank_full = rank.attrs["full"]
+    rank_full.assign(tier=tier).to_csv(
+        OUT_DIR / f"shap_feature_ranking_full_tier{tier}.csv", index=False)
+    figs = (plot_beeswarm(sv, X, classes, tier)
+            + [plot_faithfulness(faith, tier),
+               plot_paper_figure(rank_full, ga, faith, tier)])
 
     return {
         "tier": tier, "status": "ok", "gate": gate,

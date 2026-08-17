@@ -1,0 +1,100 @@
+% Drafted 2026-08-17 against the elsarticle version of the manuscript.
+% Inputted by paper_journal/main.tex immediately after the feature ablation,
+% because it interprets that result rather than standing alone.
+% Numbers trace to experiments/results/final_eval/shap_*.csv and to the
+% RESEARCH_LOG.md entry dated 2026-08-13.
+
+\subsection{Attribution: What the Router Actually Uses}
+\label{sec:shap}
+
+The ablation in Section~\ref{sec:ablation} establishes that patient features
+carry no \emph{performance}: removing them costs nothing. It does not establish
+that the router ignores them. Those are different claims, and on this router
+they come apart.
+
+We compute Shapley additive explanations~\cite{lundberg2017} over the deployed
+classifier's real 389-dimensional input, using the exact fitted embedding and
+scaler from the serialised pipeline rather than a reconstruction. Two
+correctness gates precede any attribution: on the routing-validation split the
+recomputed class probabilities match the stored predictions to $3\times10^{-8}$,
+and on the held-out evaluation set the recomputed routing decisions reproduce
+all 300 deployed mode selections exactly. Attributions satisfy the additivity
+identity to within $8\times10^{-7}$ of the raw model margin. Without those
+checks an explanation may describe a feature vector the deployed router never
+saw.
+
+\subsubsection*{The block view corroborates the ablation}
+
+Aggregating mean $|\phi|$ within each block, the 384 question-embedding
+dimensions account for \textbf{91.2\%} of total attribution mass and the five
+structural patient features for \textbf{8.8\%} (Fig.~\ref{fig:shap}a). Per
+class the patient share is 9.0\% for text-only routing, 9.0\% for text with
+EHR, and 8.4\% for the full hybrid mode --- the knowledge-graph decision is the
+\emph{least} patient-informed of the three, which is consistent with our
+sparsity finding that graph retrieval is keyed on the diagnosis list rather
+than on patient state.
+
+\subsubsection*{The per-feature view does not}
+
+That block comparison sums 384 features against five, which flatters the
+larger block by construction. Per feature the ordering reverses: the average
+patient feature receives \textbf{7.4 times} the attribution of the average
+embedding dimension (Fig.~\ref{fig:shap}b). Ranked across all 389 inputs,
+\texttt{n\_labs} is the \textbf{fifth} most attributed feature and is non-zero
+on all 300 held-out decisions; \texttt{n\_diag} ranks 14th and
+\texttt{sparsity\_score} 17th. Only \texttt{n\_meds} is genuinely inert, with
+attribution exactly zero on every decision --- a dead input rather than a weak
+one.
+
+So the router demonstrably consults patient state on every decision it makes.
+The ablation shows that consulting it does not improve routing. Both are true,
+and the defensible characterisation is a \textbf{question-driven policy that
+makes performance-neutral use of patient state} --- not a policy that ignores
+it. We stress the distinction because the weaker reading is easy to reach from
+either measurement alone, and it would overstate a negative result that is
+already sufficiently strong: patient features are redundant here, not unused.
+
+The most plausible reconciliation is redundancy rather than irrelevance. On
+laboratory questions \texttt{n\_labs} separates the two viable modes perfectly
+--- admissions with no recorded laboratory values receive text-only routing ---
+but the question text already signals the same distinction, so removing the
+feature costs no accuracy while its attribution remains high. A single
+held-out decision illustrates the pattern: for a laboratory question on an
+admission with no recorded results, \texttt{n\_labs} is the highest-attributed
+of all 389 inputs, contributing $+0.81$ toward the text-only decision.
+
+\subsubsection*{The attributions are causal for this model}
+
+Attribution magnitude alone does not establish that a feature drives the
+decision. We test this by deletion: for each decision we ablate the $k$
+features SHAP credits most toward the predicted class, replacing them with
+their training-set means, and measure the change in that class's probability
+against a random-$k$ control at the same budget (Fig.~\ref{fig:shap}c).
+
+Ablating SHAP-ranked features reduces the predicted-class probability in
+\textbf{89.9\%} of cases overall and in \textbf{100\%} once $k \geq 10$, and
+flips the routing decision outright in 25.5\% of cases. The random control
+moves the model barely at all: area over the deletion curve is \textbf{25.8
+times} larger for SHAP-ranked features than for randomly chosen ones, with a
+decision flip rate of 1.1\% against 25.5\%. Both curves plateau by $k \approx
+20$, indicating that routing rests on a small subset of the 389 inputs rather
+than on diffuse mass across them.
+
+We note the standard caveat: replacing a dense embedding dimension with its
+training mean is an off-manifold perturbation, so this measures the model's
+local sensitivity to the features SHAP credits, not the effect of a realisable
+intervention.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{shap_paper_figure_tierB.png}
+\caption{SHAP attribution over the deployed router's 389 inputs on the 300
+held-out routing decisions. (a) By block, question embeddings dominate,
+corroborating the ablation. (b) Per feature the ordering reverses: four of the
+five structural patient features sit above the mean embedding dimension
+(dashed), with \texttt{n\_labs} ranked fifth of 389; \texttt{n\_meds} has
+attribution exactly zero and is plotted at the origin. (c) Deletion test:
+ablating SHAP-ranked features collapses the predicted-mode probability while a
+random-$k$ control at the same budget does not.}
+\label{fig:shap}
+\end{figure}
