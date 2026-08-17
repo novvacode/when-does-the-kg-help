@@ -343,8 +343,8 @@ already produced, giving the upper bound any router could reach; it
 trains nothing and is reported only as a ceiling.
 
 We report BLEU~\cite{papineni2002}, ROUGE-L~\cite{lin2004}, and
-BERTScore~F1~\cite{zhang2020} for quality; an EHR-contradiction rate
-and an unsupported-claim rate as heuristic hallucination proxies; and
+BERTScore~F1~\cite{zhang2020} for quality; an unsupported-claim rate as
+a heuristic hallucination proxy; and
 latency, prompt tokens, and retrieved KG facts for cost. Confidence intervals are percentile bootstrap over
 10{,}000 resamples, paired across systems by question. Between-system
 comparisons use the paired Wilcoxon signed-rank test on the same 300
@@ -393,6 +393,7 @@ Distinct symptom / lab / drug nodes & 51 / 32 / 27 \\
 \end{table}
 
 \section{Results}
+\label{sec:results}
 
 \subsection{Main Held-Out Results}
 
@@ -410,29 +411,33 @@ quality metric and substantially exceeds random routing
 (BERTScore~F1 0.9685 vs.\ 0.9002). On BLEU and ROUGE-L it is
 effectively at the oracle ceiling (0.7497 and 0.8727).
 
-We report the EHR-contradiction rate as not applicable for mode T. The
-detector inspects the EHR snapshot for contradicted findings, and mode
-T never receives that snapshot, so the metric is structurally unable
-to fire. Its nominal value of $0.0000$ would otherwise imply that the
-weakest system is the safest.
+We do not report an EHR-contradiction rate. Our implementation of that
+detector flags an answer when it contains a negation cue followed by a
+term appearing on a diagnosis or laboratory line of the record, without
+checking whether the negation is the record's own wording. Coded
+diagnosis descriptions embed negation routinely---``spondylosis without
+myelopathy'', ``type~2 diabetes without complications''---so an answer
+that correctly reproduces a patient's coded diagnosis is scored as
+contradicting it. We therefore withdraw the measure rather than report
+a number we cannot support. The unsupported-claim rate is retained.
 
 \begin{table*}[t]
 \centering
 \small
 \setlength{\tabcolsep}{5pt}
-\caption{Held-out evaluation, 300 questions, seven systems. Latency is mean end-to-end wall clock. EHR-contradiction is not measurable for mode T (see text).}
+\caption{Held-out evaluation, 300 questions, seven systems. Latency is mean end-to-end wall clock.}
 \label{tab:main}
-\begin{tabular}{lrrrrrrrr}
+\begin{tabular}{lrrrrrrr}
 \toprule
-System & BLEU & ROUGE-L & BERTScore~F1 & EHR-Contra. & Unsupported & Latency~(ms) & Prompt tok. & KG facts \\
+System & BLEU & ROUGE-L & BERTScore~F1 & Unsupported & Latency~(ms) & Prompt tok. & KG facts \\
 \midrule
-T                            & 0.1588 & 0.2676 & 0.7937 & n/a    & 0.5813 & 2209.6 & 1922 & 0.00 \\
-T+E (always-T+E)             & 0.6859 & 0.7965 & 0.9553 & 0.0247 & 0.3244 & 3341.3 & 2118 & 0.00 \\
-T+E+K (always-on hybrid)     & 0.7481 & 0.8630 & \textbf{0.9708} & 0.0247 & \textbf{0.1832} & 7527.7 & 2367 & 8.88 \\
-\textbf{Router (ours)}       & \textbf{0.7488} & \textbf{0.8632} & 0.9685 & \textbf{0.0233} & 0.2554 & \textbf{4004.9} & 2130 & 2.04 \\
-Random                       & 0.5131 & 0.6272 & 0.9002 & 0.0193 & 0.3493 & 4297.6 & 2139 & 3.27 \\
-StaticQType                  & 0.7338 & 0.8392 & 0.9634 & 0.0240 & 0.2696 & 3790.0 & 2101 & 1.34 \\
-Oracle (upper bound)         & 0.7497 & 0.8727 & 0.9708 & 0.0233 & 0.2552 & 3961.7 & 2119 & 1.66 \\
+T                            & 0.1588 & 0.2676 & 0.7937 & 0.5813 & 2209.6 & 1922 & 0.00 \\
+T+E (always-T+E)             & 0.6859 & 0.7965 & 0.9553 & 0.3244 & 3341.3 & 2118 & 0.00 \\
+T+E+K (always-on hybrid)     & 0.7481 & 0.8630 & \textbf{0.9708} & \textbf{0.1832} & 7527.7 & 2367 & 8.88 \\
+\textbf{Router (ours)}       & \textbf{0.7488} & \textbf{0.8632} & 0.9685 & 0.2554 & \textbf{4004.9} & 2130 & 2.04 \\
+Random                       & 0.5131 & 0.6272 & 0.9002 & 0.3493 & 4297.6 & 2139 & 3.27 \\
+StaticQType                  & 0.7338 & 0.8392 & 0.9634 & 0.2696 & 3790.0 & 2101 & 1.34 \\
+Oracle (upper bound)         & 0.7497 & 0.8727 & 0.9708 & 0.2552 & 3961.7 & 2119 & 1.66 \\
 \bottomrule
 \end{tabular}
 \end{table*}
@@ -451,8 +456,7 @@ questions. On all three quality metrics the difference between the
 router and always-on hybrid retrieval is small and not statistically
 detectable: BLEU $+0.0007$ ($p = 0.304$), ROUGE-L $+0.0002$
 ($p = 0.391$), and BERTScore~F1 $-0.0024$ ($p = 0.526$), with every
-confidence interval straddling zero. The EHR-contradiction difference
-is likewise not significant ($p = 0.157$).
+confidence interval straddling zero.
 
 Two differences are significant. Latency falls by 3522.8~ms, a 46.8\%
 reduction ($p = 2.0\times10^{-42}$), achieved by invoking the KG on
@@ -479,7 +483,6 @@ Metric & Diff. & 95\% CI & $p$ \\
 BLEU              & $+0.0007$ & $[-0.0009, +0.0022]$ & 0.304 \\
 ROUGE-L           & $+0.0002$ & $[-0.0068, +0.0065]$ & 0.391 \\
 BERTScore~F1      & $-0.0024$ & $[-0.0057, +0.0003]$ & 0.526 \\
-EHR-contra.\      & $-0.0013$ & $[-0.0033, +0.0000]$ & 0.157 \\
 Unsupported rate  & $+0.0722$ & $[+0.0517, +0.0949]$ & $2.2\times10^{-10}$ \\
 Latency (ms)      & $-3522.8$ & $[-3705.7, -3330.0]$ & $2.0\times10^{-42}$ \\
 \bottomrule
@@ -732,10 +735,13 @@ edges---and hand-curated rather than extracted from a standard
 biomedical ontology, so coverage limits how often graph facts can
 apply at all.
 
-Our hallucination measures are automatic heuristics, not
-clinician-adjudicated annotations, and we perform no human
-evaluation and no inter-annotator agreement study. As reported, the
-EHR-contradiction detector is structurally inapplicable to mode T.
+Our remaining hallucination measure is an automatic heuristic, not a
+clinician-adjudicated annotation, and we perform no human evaluation
+and no inter-annotator agreement study. As reported in
+Section~\ref{sec:results}, we withdrew a second heuristic---an
+EHR-contradiction detector---after establishing that it fires on
+negation embedded in coded diagnosis descriptions rather than on
+genuine contradiction; we report no contradiction rate in its place.
 Finally, we do not implement a KG-contradiction measure, so we cannot
 say whether injected graph facts are themselves respected.
 
