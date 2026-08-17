@@ -1,7 +1,7 @@
 # SESSION STATE — Handoff Document
 
 **Last updated:** 2026-08-17 · **Repo:** https://github.com/novvacode/when-does-the-kg-help
-**HEAD:** `1c38453` · working tree clean, **pushed, in sync with `origin/main`**
+**HEAD:** `66ac996` · working tree clean, **pushed, in sync with `origin/main`**
 
 > **Phase change:** the conference paper is complete. Work since 2026-08-13 is a
 > **journal extension targeting the Journal of Biomedical Informatics (JBI)**:
@@ -98,6 +98,8 @@ Full pipeline runs end-to-end and the paper is drafted.
 | Full recompute | done | 2100 rows, 186→46 flags; **two reporting caveats, see §9** |
 | Round-3 validation | done — **criterion FAILED** | `monitoring_labs` precision 0.7333 [0.4490, 0.9221], bar was ≥0.80. See §9. |
 | Step 4: KG-contradiction | done — **VALIDATED** | contraindication-violation detector, precision 1.0000 [0.9140, 1.0000]. KG cuts violations 7→0 vs T+E (p=0.0156), but is **not** better than plain T. See §9. |
+| SHAP paper section | done |  + 3-panel figure; beeswarms rejected as unusable |
+| elsarticle conversion | done, **UNCOMPILED** | IEEEtran -> elsarticle (preprint,12pt), JBI numerical style. Structural checks pass; **compile before layering more on** |
 | `requirements.txt` | added | never existed despite README referencing it |
 
 ### Headline results (all verified against artifacts)
