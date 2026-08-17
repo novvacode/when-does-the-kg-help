@@ -1,7 +1,7 @@
 # SESSION STATE — Handoff Document
 
 **Last updated:** 2026-08-17 · **Repo:** https://github.com/novvacode/when-does-the-kg-help
-**HEAD:** `66ac996` · working tree clean, **pushed, in sync with `origin/main`**
+**HEAD:** `f62fa97` · working tree clean, **pushed, in sync with `origin/main`**
 
 > **Phase change:** the conference paper is complete. Work since 2026-08-13 is a
 > **journal extension targeting the Journal of Biomedical Informatics (JBI)**:
@@ -100,6 +100,9 @@ Full pipeline runs end-to-end and the paper is drafted.
 | Step 4: KG-contradiction | done — **VALIDATED** | contraindication-violation detector, precision 1.0000 [0.9140, 1.0000]. KG cuts violations 7→0 vs T+E (p=0.0156), but is **not** better than plain T. See §9. |
 | SHAP paper section | done | `paper_journal/sections/shap_explainability.tex` + 3-panel figure; beeswarms rejected as unusable |
 | elsarticle conversion | done, **UNCOMPILED** | IEEEtran -> elsarticle (preprint,12pt), JBI numerical style. Structural checks pass; **compile before layering more on** |
+| Step 1(a): conference fix | done | invalidated EHR-contradiction metric withdrawn from the frozen `paper/`; submittable without a known-bad claim |
+| Step 5a: seed variance | done | acc 0.9240 ± 0.0143 over 10 seeds; but the 100-row val CI [0.86, 0.97] is 1.9x wider. See §9. |
+| Step 5b: second base model | **DEFERRED** | Phi-3-mini replication: 10+ GPU h against a documented crash history. Stated limitation, not attempted. |
 | `requirements.txt` | added | never existed despite README referencing it |
 
 ### Headline results (all verified against artifacts)
@@ -333,6 +336,16 @@ EHR-contradiction **undefined** for mode T (reported `n/a`, never 0%).
   **one relation type of five** (`CONTRAINDICATED_WITH`). The other four are
   structurally uncheckable — three are non-exhaustive `LIMIT 3` lists, and
   `CO_OCCURS_WITH_LAB` is a frequency statistic no clinical claim can contradict.
+- **Seed variance is the SMALLER uncertainty on the router.** Across 10 seeds accuracy is
+  0.9240 ± 0.0143 (range 0.9000-0.9500) and the deployed 0.9200 sits *below* that mean, so
+  it is not cherry-picked. But bootstrapping the 100 validation rows gives
+  **[0.8600, 0.9700]** — a CI 1.9x wider than the seed span. Never report seed stability
+  without the evaluation CI; alone it understates how imprecisely 0.9200 is known.
+  T+E+K F1 swings 0.7568-0.8571 because that class has 18 validation rows.
+  Scope: this varies **router training only** — the QLoRA fine-tune, oracle labels and the
+  train/val partition are fixed. It is not end-to-end pipeline variance. Also
+  `subsample=1.0` disables row subsampling, so a modest spread is partly a property of the
+  deployed configuration.
 - **The KG is incomplete in two distinct ways, both worth reporting on their own.**
   (a) K026: a drug with a well-known renal risk carries no caution edge for a patient
   with impaired renal function — adjudicated 2026-08-17 as a **KG coverage gap, not a

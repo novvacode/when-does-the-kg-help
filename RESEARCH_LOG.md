@@ -7,6 +7,76 @@ without needing to read commit-by-commit diffs.
 
 ---
 
+## 2026-08-17 — Router robustness (Step 5a): stable to seed, but the 100-row
+## validation set is what actually bounds the number
+
+`src/evaluation/router_seed_variance.py`. Retrains the router across 10 seeds
+into memory only — **`models/router/` verified unmodified by checksum** — and
+separately bootstraps the deployed model's validation metrics.
+
+### Two uncertainties, deliberately not conflated
+
+**1. Training stochasticity** (10 seeds, identical data, deployed
+hyperparameters):
+
+| metric | mean ± sd | range |
+|---|---|---|
+| accuracy | **0.9240 ± 0.0143** | 0.9000 – 0.9500 |
+| macro-F1 | **0.8763 ± 0.0218** | 0.8409 – 0.9169 |
+| balanced acc. | 0.8770 ± 0.0213 | 0.8430 – 0.9155 |
+
+**Seed 42 reproduces the deployed metrics exactly** (0.9200 / 0.8692), which
+independently confirms this reimplementation matches the deployed training
+path rather than approximating it. The reported 0.9200 sits at roughly the
+20th–60th percentile of the seed distribution — **below the 10-seed mean of
+0.9240**, so the published figure is mildly conservative, not cherry-picked.
+No seed falls below 0.90.
+
+**2. Evaluation uncertainty** (deployed model, 10,000 bootstrap resamples of
+the 100 validation rows):
+
+| metric | point | 95% CI |
+|---|---|---|
+| accuracy | 0.9200 | **[0.8600, 0.9700]** |
+| macro-F1 | 0.8692 | **[0.7784, 0.9453]** |
+
+### The finding: seed variance is the smaller problem
+
+The validation-set CI is **0.1100** wide against a ~95% seed span of **0.0572**
+— **1.9x**. Reporting seed variance alone would understate how uncertain
+0.9200 is. The honest statement is that the router's accuracy is stable across
+training runs and imprecisely known regardless, because it is measured on 100
+rows.
+
+Per-class F1 makes the same point sharply: T+E is essentially fixed
+(0.9975 ± 0.0041) while **T+E+K swings 0.7568–0.8571 (sd 0.0302)** — that class
+has 18 validation examples, so a single row moves it ~5pp. Macro-F1 is more
+seed-sensitive than accuracy (sd 0.0218 vs 0.0143) entirely because of it.
+
+### Scope — this is NOT end-to-end pipeline variance
+
+Only the final stage varies. The QLoRA fine-tune, the oracle labels, and the
+train/validation partition are all held fixed. Re-running those costs hours of
+GPU time per seed on a machine with three documented CUDA faults and a BSOD.
+Report it as **router-training variance**, never as pipeline robustness.
+
+One further caveat that must travel with the numbers: the deployed
+configuration sets `subsample=1.0`, disabling row subsampling, so column
+subsampling is the only source of randomness. A modest spread is therefore
+partly a property of this configuration rather than evidence of unusual
+stability.
+
+### Step 5b (second base model) — DEFERRED, by project-owner decision
+
+Replicating on Phi-3-mini needs a full re-fine-tune, oracle regeneration and
+re-evaluation: 10+ GPU hours against the crash history above. Deferred and
+recorded as a stated limitation rather than attempted. Revisit only with real
+spare time.
+
+Artifacts: `experiments/results/final_eval/router_seed_variance.{csv,json}`.
+
+---
+
 ## 2026-08-17 — KG-contradiction check (Step 4): the KG *repairs* harm the EHR
 ## snapshot causes. First direct evidence that graph injection improves safety.
 
