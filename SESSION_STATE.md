@@ -1,7 +1,7 @@
 # SESSION STATE — Handoff Document
 
 **Last updated:** 2026-08-17 · **Repo:** https://github.com/novvacode/when-does-the-kg-help
-**HEAD:** `00bddd9` · working tree clean, **pushed, in sync with `origin/main`**
+**HEAD:** `1c38453` · working tree clean, **pushed, in sync with `origin/main`**
 
 > **Phase change:** the conference paper is complete. Work since 2026-08-13 is a
 > **journal extension targeting the Journal of Biomedical Informatics (JBI)**:
