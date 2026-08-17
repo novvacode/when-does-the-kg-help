@@ -60,11 +60,19 @@ with two control cases. Synthetic suite: **11/11**.
 900 generations.** Recall 1.0000 scoping out the single disputed row, 0.9762
 counting it.
 
-`K026` is **unadjudicated**: the annotator judged an endorsement of
-Empagliflozin a violation, but that drug is absent from the patient's KG
-cautions (Metformin, Prednisone), so the detector follows the pre-registered
-definition and the human label appears to apply clinical knowledge from outside
-the graph. Recorded both ways rather than resolved unilaterally.
+`K026` is **adjudicated as a KG coverage gap, not a detector miss**
+(2026-08-17, project owner). The annotator judged an endorsement of
+Empagliflozin a violation on the basis of that drug's real clinical renal risk
+profile; the graph does not encode that contraindication for the patient
+concerned, so the detector applied its pre-registered definition exactly.
+**Headline recall stays 1.0000**; 0.9762 is retained only for transparency.
+
+This is a concrete instance of the graph being incomplete relative to what a
+clinician knows, and belongs with the linearisation defect below: one omits a
+real contraindication, the other flattens a conditional one into an
+unconditional claim. **Both are the KG failing to capture what a clinician
+would bring to the same decision**, and both are worth reporting as properties
+of the knowledge resource rather than of the routing system.
 
 ### THE RESULT — the KG's benefit is corrective, not additive
 

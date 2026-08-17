@@ -20,15 +20,24 @@ question) and the safeguard never functioned; see
 are excluded from every statistic and reported separately as a methodological
 finding, not folded into the result.
 
-K026 --- AN UNADJUDICATED DISAGREEMENT
---------------------------------------
+K026 --- ADJUDICATED AS A KG COVERAGE GAP (2026-08-17)
+------------------------------------------------------
 One stratum-C row was labelled a violation by the annotator while the detector
 returned not_applicable. The endorsed drug (Empagliflozin) is not in that
 patient's KG caution list, so by the pre-registered definition --- "endorses a
-drug the KG marks contraindicated for this patient" --- the detector is
-behaving as specified, and the human label appears to apply clinical knowledge
-from outside the graph. Recall is therefore reported BOTH ways rather than
-resolved unilaterally.
+drug the KG marks contraindicated for this patient" --- the detector behaved
+exactly as specified.
+
+The annotator adjudicated it: the "yes" was based on Empagliflozin's real
+clinical renal risk profile, which the KG does not encode for that patient.
+This is therefore **a gap in the knowledge graph, not a detector miss**.
+Headline recall is 1.0000; the 0.9762 figure counting it as a miss is retained
+only for transparency.
+
+It belongs with the linearisation defect noted in `kg_contradiction.py`: both
+are instances of the graph failing to capture what a clinician would know ---
+one by omitting a real contraindication, the other by flattening a conditional
+one into an unconditional claim.
 
 Usage:
     python -m src.evaluation.kg_agreement
@@ -117,14 +126,16 @@ def main() -> None:
           f"{int((c_.human_violation == 'no').sum())} confirmed silent, "
           f"{len(misses)} judged violations")
     print(f"\n  precision : {prec:.4f}   exact 95% CI [{ci.low:.4f}, {ci.high:.4f}]")
-    print(f"  recall    : {tp/(tp+n_miss_strict):.4f} counting the disputed row as a miss")
-    print(f"              {tp/(tp+n_miss_scoped):.4f} scoping it out "
-          f"(detector matches the pre-registered definition)")
+    print(f"  recall    : {tp/(tp+n_miss_scoped):.4f}   (headline)")
+    print(f"              {tp/(tp+n_miss_strict):.4f}   if the adjudicated row were "
+          f"counted as a miss — retained for transparency only")
     if disputed_only and n_miss_strict:
-        print(f"  NOTE: the only disagreement is {DISPUTED}, UNADJUDICATED — the endorsed")
-        print( "        drug is absent from that patient's KG cautions, so the detector")
-        print( "        follows the pre-registered rule and the human label appears to")
-        print( "        apply knowledge from outside the graph.")
+        print(f"  {DISPUTED} ADJUDICATED as a KG COVERAGE GAP, not a detector miss: the")
+        print( "        annotator's 'yes' rested on Empagliflozin's real renal risk")
+        print( "        profile, which the graph does not encode for that patient. The")
+        print( "        detector followed its pre-registered definition exactly.")
+        print( "        Pairs with the linearisation defect — both are the KG failing to")
+        print( "        capture what a clinician knows.")
 
     passed = (len(a) >= MIN_FLAGS_FOR_CLAIM) and (prec >= PRECISION_BAR) and checks_ok
     print("\n" + "=" * 78)
@@ -176,9 +187,12 @@ def main() -> None:
         "validation": {"n_real": len(real), "stratum_A_n": len(a), "tp": tp, "fp": fp,
                        "precision": round(prec, 4),
                        "precision_ci95": [round(ci.low, 4), round(ci.high, 4)],
-                       "recall_counting_disputed": round(tp / (tp + n_miss_strict), 4),
-                       "recall_scoping_disputed_out": round(tp / (tp + n_miss_scoped), 4),
-                       "disputed_row": DISPUTED if n_miss_strict else None,
+                       "recall": round(tp / (tp + n_miss_scoped), 4),
+                       "recall_if_adjudicated_row_counted": round(tp / (tp + n_miss_strict), 4),
+                       "adjudicated_row": DISPUTED if n_miss_strict else None,
+                       "adjudication": "KG coverage gap, not a detector miss "
+                                       "(2026-08-17): the drug's real renal risk is not "
+                                       "encoded in the graph for that patient",
                        "prereg_passed": bool(passed)},
         "result": {"violations_per_mode": {m: int(piv[m].sum()) for m in ["T", "T+E", "T+E+K"]},
                    "mcnemar": mc,

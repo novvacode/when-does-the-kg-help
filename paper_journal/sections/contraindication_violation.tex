@@ -1,0 +1,176 @@
+% Drafted 2026-08-17. NOT yet inputted by paper_journal/main.tex.
+% WHEN WIRING IN: the sparsity subsection of main.tex carries no \label. Two
+% places here refer to it in prose instead. Add \label{sec:sparsity} there and
+% convert them to \ref{} if cross-references are wanted.
+% Numbers trace to experiments/results/annotation_kg/ and to the RESEARCH_LOG.md
+% entry dated 2026-08-17 (Step 4). Detector frozen in commit b282957 before any
+% held-out answer was read.
+
+\section{Does the Knowledge Graph Change What the Model Recommends?}
+\label{sec:kg-violation}
+
+Section~\ref{sec:results} shows that knowledge-graph augmentation buys quality
+at substantial latency cost, and our sparsity analysis shows its benefit
+shrinking rather than growing with record sparsity. Neither asks the question a
+clinician would ask first: when we inject guideline facts into the prompt, does
+the model's recommendation actually respect them? We report that check here.
+
+\subsection{Only one relation supports a well-posed check}
+
+Our graph carries five relation types, and they are not equally checkable. Three
+of them---first-line treatments, characteristic symptoms, and indicated
+laboratory tests---are retrieved as truncated lists of at most three items.
+Naming something outside such a list contradicts nothing, because the list was
+never exhaustive, and omission is equally uninformative. A fourth,
+laboratory co-occurrence, is a frequency computed over admissions; it is a
+descriptive statistic, and no clinical assertion can contradict it.
+
+Contraindication is different in kind. It is a prohibition, so a single
+endorsing mention is a definite violation, with no exhaustiveness assumption
+required. It is also the only relation our retriever fetches without a limit,
+and the only one with direct safety consequences. We therefore scope the
+measure to it and name it for what it measures: the
+\textbf{contraindication-violation rate}, not a general graph-faithfulness
+score.
+
+We count a violation when an answer endorses use of a drug the graph marks
+contraindicated for \emph{any} condition matched to that patient, not only the
+condition named in the question---a drug may be appropriate for the disease
+asked about and prohibited by a comorbidity. Restating the graph's own warning
+is compliance, not violation. Crucially, the graph facts serve as ground truth
+for \emph{all three} retrieval modes, including the two that never receive
+them, which is what makes the comparison below a test of whether injecting the
+facts changes behaviour.
+
+\subsection{Detector, frozen before use}
+
+Detection reduces to two steps: does the answer name a prohibited drug, and
+does it endorse or warn against it. The first is a closed-vocabulary lookup
+over fourteen drug names taken from the graph, which avoids the open-vocabulary
+matching that made our earlier contradiction heuristic unusable
+(Section~\ref{sec:halluc-validation}). The second is polarity, which is where
+lexical methods fail.
+
+We wrote the polarity rules against a development set drawn from the
+router-training and router-validation splits---data disjoint from the held-out
+evaluation---and froze them before reading a single held-out answer. That
+discipline paid immediately. The development set contained the answer
+\emph{``TSH, Lithium Levels.''}, which names a drug prohibited for that patient
+while recommending nothing at all: the drug name is part of a laboratory test
+name. This is the same class of error as the coded-vocabulary problem that
+invalidated our previous detector, in a form we would not have anticipated from
+the schema, and it is now an explicit exclusion. The detector emits four
+verdicts---violation, compliant, not applicable, and abstain---and attaches the
+matched drug, the graph edge, and the deciding span to every decision so that
+each can be audited without re-deriving it.
+
+\subsection{Validation}
+
+A human annotator, blind to the detector's output, labelled 61 generations
+stratified over the detector's own verdicts, together with constructed
+violations as attention checks. Of 41 generations the detector flagged,
+\textbf{41 were confirmed genuine and none were false positives}: precision
+$1.000$, exact 95\% CI $[0.914, 1.000]$, against a bar of $0.80$ registered
+before annotation. Ten flagged as compliant were confirmed compliant. Of ten
+where a prohibition applied but the detector stayed silent, nine were confirmed
+silent correctly. The detector abstained on none of the 900 generations.
+
+The single disagreement is instructive rather than a defect. The annotator
+judged an endorsement of empagliflozin to be a violation on the basis of that
+drug's real renal risk profile; the graph does not encode that contraindication
+for the patient concerned, so the detector, applying its stated definition,
+returned not applicable. We record this as a \emph{gap in the knowledge graph}
+rather than a detector error, and retain recall at $1.000$.
+
+\subsection{Result: the graph repairs damage the record introduces}
+
+Table~\ref{tab:kg-violation} reports violations by retrieval mode over all 300
+held-out questions, of which 212 engage at least one prohibition. Comparisons
+are paired McNemar tests on the same questions.
+
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{5pt}
+\caption{Contraindication violations by retrieval mode (300 held-out questions), with paired McNemar tests. Adding the record snapshot increases violations; adding graph facts removes them.}
+\label{tab:kg-violation}
+\begin{tabular}{lc}
+\toprule
+Mode & Violations \\
+\midrule
+T (text only)            & 12 \\
+T+E (text + record)      & \textbf{18} \\
+T+E+K (text + record + graph) & \textbf{11} \\
+\midrule
+Comparison & Discordant, $p$ \\
+\midrule
+T+E vs.\ T+E+K & 7 vs.\ 0, $p = 0.016$ \\
+T vs.\ T+E     & 0 vs.\ 6, $p = 0.031$ \\
+T vs.\ T+E+K   & 1 vs.\ 0, $p = 1.000$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Injecting graph facts eliminates seven violations and introduces none
+($p = 0.016$). Read alone, that is a clean safety benefit. Read together with
+the other two comparisons, it is something more specific and more interesting.
+
+Adding the record snapshot to text-only retrieval \emph{creates} six violations
+and removes none ($p = 0.031$). The mechanism is visible in the failure cases:
+presented with a structured medication list, the model affirms a drug it can
+see the patient is taking, without reference to whether that drug is
+contraindicated by another of the patient's conditions. The record supplies
+what the patient \emph{is} receiving, not what they \emph{should} receive, and
+the model conflates the two.
+
+Against text-only retrieval, the full hybrid configuration is not significantly
+safer ($p = 1.000$). \textbf{The graph's contribution here is therefore
+corrective rather than additive: it repairs a specific failure mode introduced
+by the record snapshot, rather than improving on the text-only baseline.} We
+state this deliberately, because the first comparison in isolation would
+support the stronger and unwarranted claim that graph augmentation reduces
+unsafe recommendations in general. On this benchmark it does not; it undoes
+harm that structured record context causes.
+
+This also sharpens our sparsity result. The graph
+helps where the record actively misleads, which is a narrower and more
+mechanistic account of when graph augmentation is worth its cost than
+``knowledge helps when the record is thin''.
+
+\subsection{Two limitations of the graph itself}
+
+Both of the following are properties of the knowledge resource rather than the
+routing system, and both surfaced only because decisions were adjudicated
+individually.
+
+First, our linearisation flattens conditional prohibitions into unconditional
+ones. The graph stores qualifying notes---``contraindicated if
+eGFR${<}30$''---but renders the fact to the model as ``Metformin is
+contraindicated in Type 2 Diabetes Mellitus''. Read literally that is false;
+metformin is first-line therapy for type 2 diabetes absent renal impairment. A
+model that endorses the drug may therefore be clinically correct while
+disagreeing with the fact it was given, and our measure will score it as a
+violation. This inflates measured violations in an unknown but non-zero number
+of cases and should be corrected in any deployment of this pipeline.
+
+Second, the graph is incomplete in ways a clinician notices immediately. The
+empagliflozin case above is a concrete instance: a drug with a well-known renal
+risk profile carries no corresponding edge for a patient with impaired renal
+function. Our hand-curated 25-disease graph encodes a fraction of what a
+clinician would bring to the same decision.
+
+Taken together these bound the interpretation. The measure reports
+\emph{agreement with the graph's assertions}, which is what a faithfulness
+check can establish; it is not a clinical safety audit, and should not be read
+as one.
+
+\subsection{Scope}
+
+This covers one relation type of five, on a benchmark where violations are
+rare---between eleven and eighteen per mode across 300 questions---so the
+paired tests rest on six and seven discordant pairs respectively. Labels come
+from a single annotator who is an author, blind to system identity and to
+detector output but not to our hypotheses, and no inter-annotator agreement
+study was performed. The direction and mechanism are consistent across the
+three comparisons and with an independent observation recorded earlier in this
+project's development, but the effect sizes are small-sample estimates.

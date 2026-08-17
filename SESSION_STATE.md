@@ -331,7 +331,11 @@ EHR-contradiction **undefined** for mode T (reported `n/a`, never 0%).
   **one relation type of five** (`CONTRAINDICATED_WITH`). The other four are
   structurally uncheckable — three are non-exhaustive `LIMIT 3` lists, and
   `CO_OCCURS_WITH_LAB` is a frequency statistic no clinical claim can contradict.
-- **The KG linearisation flattens conditional prohibitions.** `get_subgraph_facts()`
+- **The KG is incomplete in two distinct ways, both worth reporting on their own.**
+  (a) K026: a drug with a well-known renal risk carries no caution edge for a patient
+  with impaired renal function — adjudicated 2026-08-17 as a **KG coverage gap, not a
+  detector miss**; headline recall stays 1.0000. (b) The linearisation flattens
+  conditional prohibitions. `get_subgraph_facts()`
   renders "contraindicated if eGFR<30" as an unconditional "contraindicated in T2DM",
   which is literally wrong — metformin is first-line for T2DM unless renal function is
   poor. A defect worth reporting on its own, independent of any detector.
