@@ -154,31 +154,44 @@ Paired McNemar over 300 questions, 212 engaging a prohibition:
 | **T+E** | **18** |
 | **T+E+K** | **11** |
 
-| comparison | only first | only second | *p* |
-|---|---|---|---|
-| **T+E vs T+E+K** | **7** | **0** | **0.0156** |
-| **T vs T+E** | 0 | **6** | **0.0312** |
-| T vs T+E+K | 1 | 0 | 1.0000 |
+| comparison | only first | only second | raw *p* | **Holm *p*** | survives? |
+|---|---|---|---|---|---|
+| **T+E vs T+E+K** | **7** | **0** | 0.0156 | **0.0469** | ✅ |
+| T vs T+E | 0 | 6 | 0.0312 | **0.0625** | ❌ |
+| T vs T+E+K | 1 | 0 | 1.0000 | 1.0000 | ❌ |
+
+**Holm-Bonferroni applied across the three comparisons** (2026-08-17). They are
+run on one set of decisions and address one question, so three independent
+tests would inflate the family-wise error rate. Arithmetic is auditable:
+0.015625x3 = 0.0469, 0.03125x2 = 0.0625, 1.0x1 = 1.0, with monotonicity
+enforced. Only the graph-injection comparison survives, and narrowly.
 
 Two findings, and the second is the one that matters:
 
 1. **Injecting KG facts eliminates violations and introduces none** — 7 to 0
-   against T+E, p = 0.0156. This is the first direct evidence in the project
-   that the KG improves a safety outcome.
-2. **The EHR snapshot alone makes safety WORSE** — T+E violates on 6 questions
-   T does not, and none the other way (p = 0.0312). This independently
-   reproduces the 2026-08-11 observation that the snapshot leads the model to
-   affirm a drug it sees in the patient's medication list, now with a
-   statistical test rather than a single example.
+   against T+E, raw p = 0.0156, **Holm p = 0.0469**. The only comparison that
+   survives correction, and it survives with little margin. Still the first
+   direct evidence in the project that the KG improves a safety outcome.
+2. **The EHR snapshot alone is associated with WORSE safety — but this does
+   NOT survive correction.** T+E violates on 6 questions T does not, and none
+   the other way, raw p = 0.0312 but **Holm p = 0.0625**. Report it as
+   *consistent with, though not independently significant as,* a harmful
+   effect of the snapshot. The direction is unambiguous (all 6 discordant
+   pairs run the same way) and it agrees with the 2026-08-11 observation, but
+   6 pairs cannot carry a confirmed claim. The medication-list mechanism is
+   now interpretation, not a tested result.
 3. **T+E+K is NOT significantly better than plain T** (1 vs 0, p = 1.0). So the
    KG does not add safety over text-only retrieval — **it undoes the damage the
    EHR snapshot causes**. State it that way. "KG injection reduces
    contraindication violations" is true only relative to T+E, and reporting it
    without that qualifier would overclaim.
 
-This sharpens H2 rather than contradicting it: the KG's value here is repairing
-a specific failure mode introduced by structured EHR context, not general
-improvement.
+The corrective-not-additive reading survives correction, because it rests on
+the surviving comparison plus the T-vs-T+E+K null rather than on the
+downgraded result. What weakens is the *mechanism* attribution: that the EHR
+snapshot is what introduces the violations is now motivated but unconfirmed.
+Stated carefully, this sharpens H2 rather than contradicting it, but the
+sharpening is a hypothesis the data support rather than establish.
 
 ### Methodological finding: attention checks must be independently constructed
 

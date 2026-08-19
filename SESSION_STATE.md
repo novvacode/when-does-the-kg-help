@@ -97,7 +97,7 @@ Full pipeline runs end-to-end and the paper is drafted.
 | EHR-contradiction fix | done, validated | `src/evaluation/fix_ehr_contradiction.py`; FP 20→0 on unseen rows, McNemar p=2.0e-06 |
 | Full recompute | done | 2100 rows, 186→46 flags; **two reporting caveats, see §9** |
 | Round-3 validation | done — **criterion FAILED** | `monitoring_labs` precision 0.7333 [0.4490, 0.9221], bar was ≥0.80. See §9. |
-| Step 4: KG-contradiction | done — **VALIDATED** | contraindication-violation detector, precision 1.0000 [0.9140, 1.0000]. KG cuts violations 7→0 vs T+E (p=0.0156), but is **not** better than plain T. See §9. |
+| Step 4: KG-contradiction | done — **VALIDATED** | contraindication-violation detector, precision 1.0000 [0.9140, 1.0000]. KG cuts violations 7→0 vs T+E (**Holm p=0.0469**, the only comparison surviving correction); **not** better than plain T. See §9. |
 | SHAP paper section | done | `paper_journal/sections/shap_explainability.tex` + 3-panel figure; beeswarms rejected as unusable |
 | elsarticle conversion | done, **UNCOMPILED** | IEEEtran -> elsarticle (preprint,12pt), JBI numerical style. Structural checks pass; **compile before layering more on** |
 | Step 1(a): conference fix | done | invalidated EHR-contradiction metric withdrawn from the frozen `paper/`; submittable without a known-bad claim |
@@ -326,12 +326,17 @@ EHR-contradiction **undefined** for mode T (reported `n/a`, never 0%).
   available"*, triggering on `no abnormal` ("abnormal" is a generic qualifier, not a
   finding). A fix is easy and would be circular to validate on those rows — it needs a
   **fourth** fresh sample, disjoint from all three.
-- **The KG's safety benefit is CORRECTIVE, not additive.** Contraindication violations:
-  T 12 → T+E **18** → T+E+K 11. KG injection cuts violations 7→0 against T+E
-  (p=0.0156), but T+E+K is **not** significantly better than plain T (1 vs 0, p=1.0).
-  The EHR snapshot *causes* the harm (T→T+E, 0 vs 6, p=0.0312) and the KG undoes it.
-  Never write "KG injection reduces contraindication violations" without the "relative
-  to T+E" qualifier — unqualified it overclaims.
+- **The KG's safety benefit is CORRECTIVE, not additive — and only ONE of the three
+  comparisons survives multiple-comparisons correction.** Violations: T 12 → T+E **18**
+  → T+E+K 11. **Holm-Bonferroni across the 3 tests (2026-08-17):**
+  T+E vs T+E+K raw 0.0156 → **Holm 0.0469, SURVIVES**;
+  T vs T+E raw 0.0312 → **Holm 0.0625, DOES NOT SURVIVE**;
+  T vs T+E+K 1.0 → 1.0.
+  So "the EHR snapshot causes the harm" is **consistent with but not independently
+  significant** — never state it as confirmed. The corrective-not-additive reading is
+  safe: it rests on the surviving comparison plus the T-vs-T+E+K null, not on the
+  downgraded one. And never write "KG injection reduces contraindication violations"
+  without "relative to T+E" — unqualified it overclaims.
 - **This measures agreement with the KG's assertions, not clinical safety**, and covers
   **one relation type of five** (`CONTRAINDICATED_WITH`). The other four are
   structurally uncheckable — three are non-exhaustive `LIMIT 3` lists, and

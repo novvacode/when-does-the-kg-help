@@ -60,6 +60,7 @@ CHECKS = DIR / "kg_checks_filled.csv"
 VERDICTS = DIR / "kg_verdicts_all.csv"
 
 PRECISION_BAR = 0.80
+ALPHA = 0.05                       # family-wise, Holm-corrected
 MIN_FLAGS_FOR_CLAIM = 5
 DISPUTED = "K026"
 
@@ -166,14 +167,43 @@ def main() -> None:
 
     pairs = [("T+E", "T+E+K"), ("T", "T+E+K"), ("T", "T+E")]
     mc = {}
-    print("\n  paired McNemar (per question, violation yes/no):")
     for x, y in pairs:
         only_x = int((piv[x] & ~piv[y]).sum())
         only_y = int((~piv[x] & piv[y]).sum())
         p = binomtest(only_x, only_x + only_y, 0.5).pvalue if (only_x + only_y) else float("nan")
-        mc[f"{x}_vs_{y}"] = {"only_" + x: only_x, "only_" + y: only_y, "p": p}
-        print(f"    {x:5} vs {y:6}: only-{x} {only_x:2}, only-{y} {only_y:2}, "
-              f"p = {p:.4f}")
+        mc[f"{x}_vs_{y}"] = {"only_" + x: only_x, "only_" + y: only_y, "p_raw": p}
+
+    # Holm-Bonferroni across the three comparisons. They are run on ONE set of
+    # decisions and address ONE question, so reporting three independent tests
+    # would inflate the family-wise error rate. Holm is uniformly more powerful
+    # than Bonferroni at the same guarantee, which matters here because two of
+    # the three sit near alpha.
+    ordered = sorted(mc.items(), key=lambda kv: kv[1]["p_raw"])
+    m, running = len(ordered), 0.0
+    for i, (name, rec) in enumerate(ordered):
+        running = max(running, min(1.0, rec["p_raw"] * (m - i)))
+        rec["p_holm"] = running
+        rec["survives_holm"] = bool(running < ALPHA)
+
+    print(f"\n  paired McNemar, Holm-corrected across {m} comparisons "
+          f"(alpha = {ALPHA}):")
+    print(f"    {'comparison':16} {'discordant':>12} {'raw p':>9} {'Holm p':>9}  verdict")
+    for x, y in pairs:
+        r = mc[f"{x}_vs_{y}"]
+        disc = f"{r['only_' + x]} vs {r['only_' + y]}"
+        print(f"    {x + ' vs ' + y:16} {disc:>12} {r['p_raw']:9.4f} "
+              f"{r['p_holm']:9.4f}  "
+              f"{'survives' if r['survives_holm'] else 'does NOT survive'}")
+
+    n_surv = sum(1 for r in mc.values() if r["survives_holm"])
+    print(f"\n  {n_surv} of {m} comparisons survive correction.")
+    if not mc["T_vs_T+E"]["survives_holm"]:
+        print("  T vs T+E (the record snapshot introducing violations) is nominally")
+        print("  significant but does NOT survive. Report it as consistent with, though")
+        print("  not independently significant as, a harmful effect of the snapshot.")
+    if mc["T+E_vs_T+E+K"]["survives_holm"]:
+        print("  The corrective-not-additive reading rests on T+E vs T+E+K (survives)")
+        print("  together with the T vs T+E+K null, so it does not depend on the above.")
 
     print(f"\n  abstain verdicts across all {len(v)} generations: "
           f"{int((v.verdict == 'abstain').sum())}")

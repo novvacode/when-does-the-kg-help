@@ -1,7 +1,4 @@
-% Drafted 2026-08-17. NOT yet inputted by paper_journal/main.tex.
-% WHEN WIRING IN: the sparsity subsection of main.tex carries no \label. Two
-% places here refer to it in prose instead. Add \label{sec:sparsity} there and
-% convert them to \ref{} if cross-references are wanted.
+% Drafted 2026-08-17. Inputted by paper_journal/main.tex before the Discussion.
 % Numbers trace to experiments/results/annotation_kg/ and to the RESEARCH_LOG.md
 % entry dated 2026-08-17 (Step 4). Detector frozen in commit b282957 before any
 % held-out answer was read.
@@ -10,7 +7,7 @@
 \label{sec:kg-violation}
 
 Section~\ref{sec:results} shows that knowledge-graph augmentation buys quality
-at substantial latency cost, and our sparsity analysis shows its benefit
+at substantial latency cost, and Section~\ref{sec:sparsity} shows its benefit
 shrinking rather than growing with record sparsity. Neither asks the question a
 clinician would ask first: when we inject guideline facts into the prompt, does
 the model's recommendation actually respect them? We report that check here.
@@ -84,58 +81,69 @@ rather than a detector error, and retain recall at $1.000$.
 
 \subsection{Result: the graph repairs damage the record introduces}
 
-Table~\ref{tab:kg-violation} reports violations by retrieval mode over all 300
-held-out questions, of which 212 engage at least one prohibition. Comparisons
-are paired McNemar tests on the same questions.
+Across the 300 held-out questions, 212 engage at least one prohibition.
+Violations number 12 under text-only retrieval, 18 with the record snapshot
+added, and 11 with graph facts added. Table~\ref{tab:kg-violation} reports the
+three paired McNemar comparisons on the same questions. Because we run three
+related tests on one set of decisions, we report Holm-corrected $p$-values
+alongside the raw ones and interpret only the corrected column.
 
 \begin{table}[t]
 \centering
 \footnotesize
 \setlength{\tabcolsep}{5pt}
-\caption{Contraindication violations by retrieval mode (300 held-out questions), with paired McNemar tests. Adding the record snapshot increases violations; adding graph facts removes them.}
+\caption{Paired McNemar comparisons of contraindication violations between retrieval modes, on the same 300 held-out questions. Discordant pairs are questions where exactly one of the two modes violates. Holm-corrected $p$-values account for the three comparisons; only the first survives at $\alpha = 0.05$.}
 \label{tab:kg-violation}
-\begin{tabular}{lc}
+\begin{tabular}{lccc}
 \toprule
-Mode & Violations \\
+Comparison & Discordant & raw $p$ & Holm $p$ \\
 \midrule
-T (text only)            & 12 \\
-T+E (text + record)      & \textbf{18} \\
-T+E+K (text + record + graph) & \textbf{11} \\
-\midrule
-Comparison & Discordant, $p$ \\
-\midrule
-T+E vs.\ T+E+K & 7 vs.\ 0, $p = 0.016$ \\
-T vs.\ T+E     & 0 vs.\ 6, $p = 0.031$ \\
-T vs.\ T+E+K   & 1 vs.\ 0, $p = 1.000$ \\
+T+E vs.\ T+E+K & 7 vs.\ 0 & 0.016 & \textbf{0.047} \\
+T vs.\ T+E     & 0 vs.\ 6 & 0.031 & 0.063 \\
+T vs.\ T+E+K   & 1 vs.\ 0 & 1.000 & 1.000 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Injecting graph facts eliminates seven violations and introduces none
-($p = 0.016$). Read alone, that is a clean safety benefit. Read together with
-the other two comparisons, it is something more specific and more interesting.
+Injecting graph facts eliminates seven violations and introduces none. This
+is the one comparison that survives correction ($p = 0.016$ raw, $0.047$
+Holm-corrected), and it does so with little margin. Read alone it is a clean
+safety benefit; read together with the other two comparisons it is something
+more specific, and more qualified.
 
-Adding the record snapshot to text-only retrieval \emph{creates} six violations
-and removes none ($p = 0.031$). The mechanism is visible in the failure cases:
-presented with a structured medication list, the model affirms a drug it can
-see the patient is taking, without reference to whether that drug is
-contraindicated by another of the patient's conditions. The record supplies
-what the patient \emph{is} receiving, not what they \emph{should} receive, and
-the model conflates the two.
+Adding the record snapshot to text-only retrieval is associated with six
+additional violations and none removed. We flag this one carefully: it is
+nominally significant ($p = 0.031$) but \textbf{does not survive correction for
+the three comparisons} ($p = 0.063$ Holm-corrected). We therefore report it as
+consistent with, though not independently significant as, a harmful effect of
+the record snapshot. The direction is unambiguous---all six discordant pairs
+run the same way---but six pairs is a thin basis for a confirmed claim.
 
-Against text-only retrieval, the full hybrid configuration is not significantly
-safer ($p = 1.000$). \textbf{The graph's contribution here is therefore
-corrective rather than additive: it repairs a specific failure mode introduced
-by the record snapshot, rather than improving on the text-only baseline.} We
-state this deliberately, because the first comparison in isolation would
-support the stronger and unwarranted claim that graph augmentation reduces
-unsafe recommendations in general. On this benchmark it does not; it undoes
-harm that structured record context causes.
+The failure cases suggest a mechanism, offered as interpretation rather than
+as a tested result: presented with a structured medication list, the model
+affirms a drug it can see the patient is taking, without reference to whether
+that drug is contraindicated by another of the patient's conditions. The
+record supplies what the patient \emph{is} receiving, not what they
+\emph{should} receive, and the model appears to conflate the two. Confirming
+this would need a larger sample of prohibition-engaging questions than this
+benchmark provides.
 
-This also sharpens our sparsity result. The graph
-helps where the record actively misleads, which is a narrower and more
-mechanistic account of when graph augmentation is worth its cost than
-``knowledge helps when the record is thin''.
+Against text-only retrieval, the full hybrid configuration is not
+significantly safer ($p = 1.000$). \textbf{The graph's contribution here is
+therefore corrective rather than additive: it recovers ground lost when the
+record snapshot is added, rather than improving on the text-only baseline.}
+This reading rests on the surviving comparison together with a clear null, and
+does not depend on the uncorrected result above. We state it deliberately,
+because the first comparison in isolation would support the stronger and
+unwarranted claim that graph augmentation reduces unsafe recommendations in
+general. On this benchmark it does not.
+
+If the record-snapshot effect is real, this would also sharpen the sparsity result of
+Section~\ref{sec:sparsity}, suggesting that the graph helps where the record actively misleads
+rather than merely where it is thin---a narrower and more mechanistic account
+of when graph augmentation is worth its cost. We offer that as a hypothesis
+the present data motivate but do not establish, since the comparison it rests
+on does not survive correction.
 
 \subsection{Two limitations of the graph itself}
 
@@ -168,7 +176,13 @@ as one.
 
 This covers one relation type of five, on a benchmark where violations are
 rare---between eleven and eighteen per mode across 300 questions---so the
-paired tests rest on six and seven discordant pairs respectively. Labels come
+paired tests rest on six and seven discordant pairs respectively. Because the
+three comparisons are run on the same set of decisions and address one
+question, we control the family-wise error rate with the Holm-Bonferroni
+procedure rather than reporting three independent tests; Holm is uniformly
+more powerful than Bonferroni at the same guarantee, which matters when a
+result sits close to the threshold, as ours do. Under correction only the
+graph-injection comparison remains significant, and it does so narrowly. Labels come
 from a single annotator who is an author, blind to system identity and to
 detector output but not to our hypotheses, and no inter-annotator agreement
 study was performed. The direction and mechanism are consistent across the
